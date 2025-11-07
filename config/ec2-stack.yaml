@@ -32,6 +32,10 @@ Parameters:
     AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
     ConstraintDescription: Must be a valid IP CIDR range (x.x.x.x/x)
 
+  ALBSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least 2 subnets in different AZs for the Application Load Balancer
+
 Mappings:
   # Amazon Linux 2023 AMI IDs per region
   RegionMap:
@@ -45,7 +49,34 @@ Mappings:
       AMI: ami-0c6120f461d6b39e9
 
 Resources:
-  # Security Group
+  # ALB Security Group
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${Environment}-hello-erlang-alb-sg'
+      GroupDescription: Security group for Application Load Balancer
+      SecurityGroupIngress:
+        # HTTP from internet
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP access from internet
+        # HTTPS from internet (for future use)
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS access from internet
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-hello-erlang-alb-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # EC2 Security Group
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -58,12 +89,12 @@ Resources:
           ToPort: 22
           CidrIp: !Ref SSHLocation
           Description: SSH access
-        # HTTP application port
+        # HTTP application port (only from ALB)
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
-          CidrIp: 0.0.0.0/0
-          Description: Hello Erlang HTTP endpoint
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: Hello Erlang HTTP endpoint from ALB
       Tags:
         - Key: Name
           Value: !Sub '${Environment}-hello-erlang-sg'
@@ -158,6 +189,65 @@ Resources:
       InstanceId: !Ref EC2Instance
       EIP: !Ref ElasticIP
 
+  # Application Load Balancer
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${Environment}-hello-erlang-alb'
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Subnets: !Ref ALBSubnets
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-hello-erlang-alb'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # Target Group
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${Environment}-hello-erlang-tg'
+      Port: 8080
+      Protocol: HTTP
+      VpcId: !GetAtt EC2Instance.VpcId
+      TargetType: instance
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /echo?message=health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: 200
+      Targets:
+        - Id: !Ref EC2Instance
+          Port: 8080
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-hello-erlang-tg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # ALB Listener (HTTP)
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
 Outputs:
   InstanceId:
     Description: EC2 Instance ID
@@ -184,10 +274,22 @@ Outputs:
       Name: !Sub '${Environment}-hello-erlang-sg-id'
 
   ApplicationURL:
-    Description: Application URL
+    Description: Application URL (direct EC2 access)
     Value: !Sub 'http://${ElasticIP}:8080/echo?message=Hello'
     Export:
       Name: !Sub '${Environment}-hello-erlang-url'
+
+  LoadBalancerDNS:
+    Description: Load Balancer DNS name
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub '${Environment}-hello-erlang-alb-dns'
+
+  LoadBalancerURL:
+    Description: Load Balancer URL (recommended)
+    Value: !Sub 'http://${ApplicationLoadBalancer.DNSName}/echo?message=Hello'
+    Export:
+      Name: !Sub '${Environment}-hello-erlang-alb-url'
 
   SSHCommand:
     Description: SSH command to connect

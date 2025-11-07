@@ -4,9 +4,11 @@ This guide covers deploying Hello Erlang to AWS EC2 using CloudFormation.
 
 ## Architecture
 
+- **Application Load Balancer (ALB)**: HTTP/HTTPS traffic distribution
+- **Target Group**: Health checks and routing to EC2:8080
 - **EC2 Instance**: Runs the Erlang release
-- **Security Group**: SSH (22) and HTTP (8080) access
-- **Elastic IP**: Stable public IP address
+- **Security Groups**: ALB (80/443 from internet), EC2 (22 from specified IP, 8080 from ALB only)
+- **Elastic IP**: Direct EC2 SSH access
 - **IAM Role**: For future CloudWatch/SSM integration
 
 ## Prerequisites
@@ -17,13 +19,13 @@ This guide covers deploying Hello Erlang to AWS EC2 using CloudFormation.
    # Sets default region and credentials in ~/.aws/config
    ```
 
-2. **Override AWS settings** (optional)
+2. **Local AWS config** (optional)
    ```bash
-   # Use a different region
-   export AWS_REGION=us-west-2
+   # Copy example config
+   cp config/aws.sh.example config/aws.sh
 
-   # Use a specific profile
-   export AWS_PROFILE=myprofile
+   # Edit to customize (gitignored)
+   vim config/aws.sh
    ```
 
 3. **EC2 Key Pair** created in your AWS region
@@ -36,7 +38,16 @@ This guide covers deploying Hello Erlang to AWS EC2 using CloudFormation.
    aws ec2 describe-key-pairs --query 'KeyPairs[*].KeyName' --output table
    ```
 
-4. **Build tools** installed
+4. **VPC Subnet IDs** for Application Load Balancer
+   ```bash
+   # Get default VPC subnet IDs (need at least 2 in different AZs)
+   aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" \
+     --query 'Subnets[*].[SubnetId,AvailabilityZone]' --output table
+
+   # Copy 2 or more subnet IDs for use with --subnets parameter
+   ```
+
+5. **Build tools** installed
    - Erlang/OTP
    - Rebar3
 
@@ -45,11 +56,17 @@ This guide covers deploying Hello Erlang to AWS EC2 using CloudFormation.
 ### 1. Create Infrastructure
 
 ```bash
+# Get subnet IDs for ALB (copy 2 subnet IDs from output)
+aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" \
+  --query 'Subnets[*].[SubnetId,AvailabilityZone]' --output table
+
 # Create a development stack
-./scripts/aws/stack.sh create dev --key-name hello-erlang-dev
+./scripts/aws/stack.sh create dev \
+  --key-name hello-erlang-dev \
+  --subnets subnet-xxxxx,subnet-yyyyy
 
 # This takes 3-5 minutes
-# Creates: EC2 instance, Security Group, Elastic IP, IAM roles
+# Creates: ALB, Target Group, EC2 instance, Security Groups, Elastic IP, IAM roles
 ```
 
 ### 2. Deploy Application
@@ -69,11 +86,14 @@ This guide covers deploying Hello Erlang to AWS EC2 using CloudFormation.
 ### 3. Access Application
 
 ```bash
-# Get the public IP and URL
+# Get the ALB URL and other outputs
 ./scripts/aws/stack.sh outputs dev
 
-# Test the endpoint
-curl "http://YOUR_IP:8080/echo?message=Hello"
+# Test the endpoint via Load Balancer (recommended)
+curl "http://YOUR_ALB_DNS_NAME/echo?message=Hello"
+
+# Or test direct EC2 access (for debugging)
+curl "http://YOUR_EC2_IP:8080/echo?message=Hello"
 ```
 
 ### 4. Update Code (Iterative Development)
@@ -100,7 +120,7 @@ curl "http://YOUR_IP:8080/echo?message=Hello"
 
 ```bash
 # Create stack
-./scripts/aws/stack.sh create <env> --key-name <name> [--instance-type t3.small]
+./scripts/aws/stack.sh create <env> --key-name <name> --subnets <subnet-ids> [--instance-type t3.small]
 
 # Delete stack
 ./scripts/aws/stack.sh delete <env>
@@ -155,7 +175,7 @@ Available options:
 
 Specify during stack creation:
 ```bash
-./scripts/aws/stack.sh create prod --key-name my-key --instance-type t3.medium
+./scripts/aws/stack.sh create prod --key-name my-key --subnets subnet-xxx,subnet-yyy --instance-type t3.medium
 ```
 
 ## Workflow Examples
@@ -163,8 +183,10 @@ Specify during stack creation:
 ### Development Workflow
 
 ```bash
-# One-time setup
-./scripts/aws/stack.sh create dev --key-name my-key
+# One-time setup (get subnet IDs first)
+SUBNETS=$(aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" \
+  --query 'Subnets[0:2].SubnetId' --output text | tr '\t' ',')
+./scripts/aws/stack.sh create dev --key-name my-key --subnets $SUBNETS
 
 # Iterative development
 while true; do
@@ -174,8 +196,9 @@ while true; do
   # Deploy (30 seconds)
   ./scripts/aws/deploy.sh dev
 
-  # Test
-  curl "http://$(./scripts/aws/stack.sh outputs dev | grep PublicIP | awk '{print $4}'):8080/echo?message=Test"
+  # Test via ALB
+  ALB_DNS=$(./scripts/aws/stack.sh outputs dev | grep LoadBalancerDNS | awk '{print $4}')
+  curl "http://${ALB_DNS}/echo?message=Test"
 done
 
 # Clean up when done
@@ -185,16 +208,20 @@ done
 ### Multi-Environment Deployment
 
 ```bash
+# Get subnet IDs once (use for all environments)
+SUBNETS=$(aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" \
+  --query 'Subnets[0:2].SubnetId' --output text | tr '\t' ',')
+
 # Deploy to dev
-./scripts/aws/stack.sh create dev --key-name my-key
+./scripts/aws/stack.sh create dev --key-name my-key --subnets $SUBNETS
 ./scripts/aws/deploy.sh dev
 
 # Test in dev, then promote to staging
-./scripts/aws/stack.sh create staging --key-name my-key --instance-type t3.medium
+./scripts/aws/stack.sh create staging --key-name my-key --subnets $SUBNETS --instance-type t3.medium
 ./scripts/aws/deploy.sh staging
 
 # Test in staging, then promote to prod
-./scripts/aws/stack.sh create prod --key-name my-key --instance-type t3.large
+./scripts/aws/stack.sh create prod --key-name my-key --subnets $SUBNETS --instance-type t3.large
 ./scripts/aws/deploy.sh prod
 ```
 
@@ -268,49 +295,65 @@ cd /opt/hello_erlang
 
 Approximate AWS costs (us-east-1, on-demand):
 
+**EC2 Instances:**
 - **t3.micro**: ~$0.0104/hour (~$7.50/month)
 - **t3.small**: ~$0.0208/hour (~$15/month)
 - **t3.medium**: ~$0.0416/hour (~$30/month)
 
-Plus:
+**Application Load Balancer:**
+- ALB: ~$0.0225/hour (~$16.50/month)
+- LCU (Load Balancer Capacity Units): ~$0.008/LCU-hour (minimal for low traffic)
+
+**Other:**
 - Elastic IP: Free while instance is running
-- Data transfer: First 1 GB free/month
+- Data transfer: First 1 GB free/month, then $0.09/GB
 
-**Total for dev environment**: ~$15-20/month
+**Total for dev environment**: ~$32-35/month (t3.small + ALB)
 
-**Tip**: Delete stacks when not in use to save costs.
+**Tip**: Delete stacks when not in use to save costs. ALB is a fixed cost even with no traffic.
 
 ## Security Best Practices
 
 1. **Restrict SSH access**: Use your IP instead of 0.0.0.0/0
    ```bash
-   ./scripts/aws/stack.sh create dev --key-name my-key --ssh-location YOUR_IP/32
+   ./scripts/aws/stack.sh create dev --key-name my-key --subnets $SUBNETS --ssh-location YOUR_IP/32
    ```
 
-2. **Use key pairs**: Never expose private keys in version control
+2. **Application access through ALB only**: EC2 port 8080 only accepts traffic from ALB security group (not internet)
 
-3. **Use IAM roles**: Already configured for CloudWatch/SSM
+3. **Use key pairs**: Never expose private keys in version control
 
-4. **Rotate keys**: Periodically update EC2 key pairs
+4. **Use IAM roles**: Already configured for CloudWatch/SSM
+
+5. **Rotate keys**: Periodically update EC2 key pairs
+
+6. **HTTPS/TLS**: For production, add ACM certificate and HTTPS listener to ALB (see Future Enhancements)
 
 ## Future Enhancements
 
-### Phase 3: Hot Code Reloading
+### Phase 3: HTTPS/TLS
+- AWS Certificate Manager (ACM) certificate
+- HTTPS listener on ALB (port 443)
+- HTTP to HTTPS redirect
+- Custom domain configuration (Route 53)
+
+### Phase 4: Hot Code Reloading
 - Relup/appup configuration
 - Zero-downtime deployments
 - Version management
 
-### Phase 4: Observability
+### Phase 5: Observability
 - CloudWatch logs integration
 - Custom metrics
 - Alarms for errors/downtime
-- Health check endpoints
+- Enhanced health check endpoints
+- X-Ray tracing
 
-### Phase 5: High Availability
-- Application Load Balancer
-- Auto Scaling Group
+### Phase 6: High Availability
+- Auto Scaling Group (multiple EC2 instances)
 - Multi-AZ deployment
 - Erlang distribution/clustering
+- Session persistence/sticky sessions
 
 ## Additional Resources
 

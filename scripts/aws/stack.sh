@@ -5,12 +5,13 @@ set -e
 
 cd "$(dirname "$0")/../.."
 
+# Load local AWS config if it exists (gitignored)
+if [ -f "config/aws.sh" ]; then
+    source "config/aws.sh"
+fi
+
 TEMPLATE_FILE="config/ec2-stack.yaml"
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
-
-# AWS region and profile from environment or AWS CLI defaults
-# Override with: export AWS_REGION=us-west-2
-# Override with: export AWS_PROFILE=myprofile
 
 usage() {
     echo "Usage: $0 {create|delete|update|status|outputs|events|list} <environment> [options]"
@@ -30,6 +31,12 @@ usage() {
     echo "  --key-name <name>         - EC2 key pair name (required for create)"
     echo "  --instance-type <type>    - EC2 instance type (default: t3.small)"
     echo "  --ssh-location <cidr>     - SSH access CIDR (default: 0.0.0.0/0)"
+    echo "  --subnets <subnet-ids>    - Comma-separated subnet IDs for ALB (required for create)"
+    echo "                              Must be at least 2 subnets in different AZs"
+    echo ""
+    echo "Note: To get default VPC subnet IDs, run:"
+    echo "  aws ec2 describe-subnets --filters \"Name=default-for-az,Values=true\" \\"
+    echo "    --query 'Subnets[*].[SubnetId,AvailabilityZone]' --output table"
     exit 1
 }
 
@@ -47,6 +54,7 @@ create_stack() {
     local key_name=""
     local instance_type="t3.small"
     local ssh_location="0.0.0.0/0"
+    local subnets=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -60,6 +68,10 @@ create_stack() {
                 ;;
             --ssh-location)
                 ssh_location="$2"
+                shift 2
+                ;;
+            --subnets)
+                subnets="$2"
                 shift 2
                 ;;
             *)
@@ -77,11 +89,23 @@ create_stack() {
         exit 1
     fi
 
+    if [ -z "$subnets" ]; then
+        echo "Error: --subnets is required for creating a stack"
+        echo ""
+        echo "To get default VPC subnet IDs, run:"
+        echo "  aws ec2 describe-subnets --filters \"Name=default-for-az,Values=true\" \\"
+        echo "    --query 'Subnets[*].[SubnetId,AvailabilityZone]' --output table"
+        echo ""
+        echo "Then use: --subnets subnet-xxxxx,subnet-yyyyy"
+        exit 1
+    fi
+
     echo "Creating stack: $stack_name"
     echo "  Environment: $env"
     echo "  Key Name: $key_name"
     echo "  Instance Type: $instance_type"
     echo "  SSH Location: $ssh_location"
+    echo "  ALB Subnets: $subnets"
     echo ""
 
     aws cloudformation create-stack \
@@ -92,6 +116,7 @@ create_stack() {
             "ParameterKey=KeyName,ParameterValue=$key_name" \
             "ParameterKey=InstanceType,ParameterValue=$instance_type" \
             "ParameterKey=SSHLocation,ParameterValue=$ssh_location" \
+            "ParameterKey=ALBSubnets,ParameterValue=\"$subnets\"" \
         --capabilities CAPABILITY_NAMED_IAM \
         --tags \
             "Key=Environment,Value=$env" \
@@ -163,6 +188,7 @@ update_stack() {
             "ParameterKey=KeyName,UsePreviousValue=true" \
             "ParameterKey=InstanceType,UsePreviousValue=true" \
             "ParameterKey=SSHLocation,UsePreviousValue=true" \
+            "ParameterKey=ALBSubnets,UsePreviousValue=true" \
         --capabilities CAPABILITY_NAMED_IAM
 
     echo ""

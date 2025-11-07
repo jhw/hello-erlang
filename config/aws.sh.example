@@ -1,0 +1,19 @@
+#!/bin/bash
+# AWS Configuration (optional overrides)
+#
+# Copy this file to aws.sh and customize:
+#   cp config/aws.sh.example config/aws.sh
+#
+# The aws.sh file is gitignored, so your settings stay local.
+
+# Uncomment to use a different AWS region
+# export AWS_REGION=us-west-2
+
+# Uncomment to use a specific AWS profile
+# export AWS_PROFILE=work
+
+# Uncomment to override stack name prefix
+# export STACK_PREFIX=my-erlang-app
+
+# Uncomment to use a different deployment directory on EC2
+# export DEPLOY_DIR=/opt/my_app
