@@ -14,27 +14,17 @@ This guide covers deploying Hello Erlang to AWS EC2 using CloudFormation.
 1. **AWS CLI** installed and configured
    ```bash
    aws configure
+   # Sets default region and credentials in ~/.aws/config
    ```
 
-2. **Project AWS Configuration** (Optional but recommended)
+2. **Override AWS settings** (optional)
    ```bash
-   # Copy example config
-   cp config/aws-local.sh.example config/aws-local.sh
+   # Use a different region
+   export AWS_REGION=us-west-2
 
-   # Edit to set your preferences
-   vim config/aws-local.sh
-
-   # Example:
-   # export AWS_REGION=us-west-2
-   # export AWS_PROFILE=myprofile
-   # export DEFAULT_SSH_LOCATION=YOUR_IP/32
+   # Use a specific profile
+   export AWS_PROFILE=myprofile
    ```
-
-   **Configuration Hierarchy:**
-   1. `config/aws-local.sh` (gitignored, your personal settings)
-   2. `config/aws-defaults.sh` (committed, project defaults)
-   3. `~/.aws/config` (AWS CLI defaults)
-   4. Environment variables (highest priority)
 
 3. **EC2 Key Pair** created in your AWS region
    ```bash

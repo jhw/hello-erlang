@@ -5,19 +5,13 @@ set -e
 
 cd "$(dirname "$0")/../.."
 
-# Load AWS configuration
-if [ -f "config/aws-defaults.sh" ]; then
-    source "config/aws-defaults.sh"
-fi
-
-# Load local overrides (gitignored)
-if [ -f "config/aws-local.sh" ]; then
-    source "config/aws-local.sh"
-fi
-
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
+
+# AWS region and profile from environment or AWS CLI defaults
+# Override with: export AWS_REGION=us-west-2
+# Override with: export AWS_PROFILE=myprofile
 
 usage() {
     echo "Usage: $0 <environment> [options]"
