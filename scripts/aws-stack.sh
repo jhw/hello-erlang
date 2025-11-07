@@ -36,7 +36,7 @@ usage() {
     echo ""
     echo "* Required unless set as DEFAULT_* variables in config/aws.sh"
     echo ""
-    echo "To set defaults, copy config/aws.sh.example to config/aws.sh and customize."
+    echo "To set defaults, edit config/aws.sh and customize."
     echo ""
     echo "To get default VPC subnet IDs, run:"
     echo "  aws ec2 describe-subnets --filters \"Name=default-for-az,Values=true\" \\"

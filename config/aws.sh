@@ -1,10 +1,9 @@
 #!/bin/bash
-# AWS Configuration (optional overrides)
+# AWS Configuration
 #
-# Copy this file to aws.sh and customize:
-#   cp config/aws.sh.example config/aws.sh
-#
-# The aws.sh file is gitignored, so your settings stay local.
+# This file provides default configuration for AWS deployment scripts.
+# Edit the values below to customize for your environment.
+# All settings are optional - uncomment and modify as needed.
 
 # AWS CLI Configuration
 # Uncomment to use a different AWS region

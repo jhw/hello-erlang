@@ -19,9 +19,6 @@ logs
 rebar3.crashdump
 *~
 
-# Local AWS configuration
-config/aws.sh
-
 # SSH keys (never commit)
 *.pem
 *.key

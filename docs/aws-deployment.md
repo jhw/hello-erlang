@@ -22,7 +22,7 @@ This guide covers deploying Hello Erlang to AWS EC2 using CloudFormation.
 2. **Local AWS config** (optional but recommended)
    ```bash
    # Copy example config
-   cp config/aws.sh.example config/aws.sh
+   # Edit config/aws.sh to set your defaults
 
    # Edit to customize (gitignored)
    # Set defaults for key name, subnets, instance type, SSH location, etc.
@@ -60,7 +60,7 @@ This guide covers deploying Hello Erlang to AWS EC2 using CloudFormation.
 
 ```bash
 # 1. Set up local config
-cp config/aws.sh.example config/aws.sh
+# Edit config/aws.sh to set your defaults
 
 # 2. Get your subnet IDs
 aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" \
