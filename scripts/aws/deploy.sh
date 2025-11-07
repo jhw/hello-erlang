@@ -5,8 +5,18 @@ set -e
 
 cd "$(dirname "$0")/../.."
 
-STACK_PREFIX="hello-erlang"
-DEPLOY_DIR="/opt/hello_erlang"
+# Load AWS configuration
+if [ -f "config/aws-defaults.sh" ]; then
+    source "config/aws-defaults.sh"
+fi
+
+# Load local overrides (gitignored)
+if [ -f "config/aws-local.sh" ]; then
+    source "config/aws-local.sh"
+fi
+
+STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
+DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {

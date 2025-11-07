@@ -16,7 +16,27 @@ This guide covers deploying Hello Erlang to AWS EC2 using CloudFormation.
    aws configure
    ```
 
-2. **EC2 Key Pair** created in your AWS region
+2. **Project AWS Configuration** (Optional but recommended)
+   ```bash
+   # Copy example config
+   cp config/aws-local.sh.example config/aws-local.sh
+
+   # Edit to set your preferences
+   vim config/aws-local.sh
+
+   # Example:
+   # export AWS_REGION=us-west-2
+   # export AWS_PROFILE=myprofile
+   # export DEFAULT_SSH_LOCATION=YOUR_IP/32
+   ```
+
+   **Configuration Hierarchy:**
+   1. `config/aws-local.sh` (gitignored, your personal settings)
+   2. `config/aws-defaults.sh` (committed, project defaults)
+   3. `~/.aws/config` (AWS CLI defaults)
+   4. Environment variables (highest priority)
+
+3. **EC2 Key Pair** created in your AWS region
    ```bash
    # Create a new key pair
    aws ec2 create-key-pair --key-name hello-erlang-dev --query 'KeyMaterial' --output text > ~/.ssh/hello-erlang-dev.pem
@@ -26,7 +46,7 @@ This guide covers deploying Hello Erlang to AWS EC2 using CloudFormation.
    aws ec2 describe-key-pairs --query 'KeyPairs[*].KeyName' --output table
    ```
 
-3. **Build tools** installed
+4. **Build tools** installed
    - Erlang/OTP
    - Rebar3
 

@@ -5,8 +5,18 @@ set -e
 
 cd "$(dirname "$0")/../.."
 
+# Load AWS configuration
+if [ -f "config/aws-defaults.sh" ]; then
+    source "config/aws-defaults.sh"
+fi
+
+# Load local overrides (gitignored)
+if [ -f "config/aws-local.sh" ]; then
+    source "config/aws-local.sh"
+fi
+
 TEMPLATE_FILE="aws/cloudformation/ec2-stack.yaml"
-STACK_PREFIX="hello-erlang"
+STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
     echo "Usage: $0 {create|delete|update|status|outputs|events|list} <environment> [options]"

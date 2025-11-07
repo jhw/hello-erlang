@@ -18,3 +18,10 @@ logs
 *.iml
 rebar3.crashdump
 *~
+
+# Local AWS configuration (contains personal settings/secrets)
+config/aws-local.sh
+
+# SSH keys (never commit)
+*.pem
+*.key
