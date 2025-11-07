@@ -193,7 +193,7 @@ deploy() {
 
     if [ -z "$instance_ip" ]; then
         echo "Error: Could not get instance IP for environment '$env'"
-        echo "Make sure the stack exists: ./scripts/aws/stack.sh status $env"
+        echo "Make sure the stack exists: ./scripts/aws-stack.sh status $env"
         exit 1
     fi
 

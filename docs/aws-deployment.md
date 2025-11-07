@@ -72,7 +72,7 @@ aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" \
 vim config/aws.sh
 
 # 4. Create stack (no parameters needed - uses defaults from config)
-./scripts/aws/stack.sh create dev
+./scripts/aws-stack.sh create dev
 
 # This takes 3-5 minutes
 # Creates: ALB, Target Group, EC2 instance, Security Groups, Elastic IP, IAM roles
@@ -86,7 +86,7 @@ aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" \
   --query 'Subnets[*].[SubnetId,AvailabilityZone]' --output table
 
 # Create a development stack
-./scripts/aws/stack.sh create dev \
+./scripts/aws-stack.sh create dev \
   --key-name hello-erlang-dev \
   --subnets subnet-xxxxx,subnet-yyyyy
 
@@ -98,7 +98,7 @@ aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" \
 
 ```bash
 # Build and deploy in one command
-./scripts/aws/deploy.sh dev
+./scripts/aws-deploy.sh dev
 
 # This will:
 # - Build the release tarball
@@ -112,7 +112,7 @@ aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" \
 
 ```bash
 # Get the ALB URL and other outputs
-./scripts/aws/stack.sh outputs dev
+./scripts/aws-stack.sh outputs dev
 
 # Test the endpoint via Load Balancer (recommended)
 curl "http://YOUR_ALB_DNS_NAME/echo?message=Hello"
@@ -126,7 +126,7 @@ curl "http://YOUR_EC2_IP:8080/echo?message=Hello"
 ```bash
 # Make code changes
 # Then redeploy:
-./scripts/aws/deploy.sh dev
+./scripts/aws-deploy.sh dev
 
 # Takes ~30 seconds
 # Automatically stops, replaces, and restarts
@@ -136,7 +136,7 @@ curl "http://YOUR_EC2_IP:8080/echo?message=Hello"
 
 ```bash
 # Delete the stack when done
-./scripts/aws/stack.sh delete dev
+./scripts/aws-stack.sh delete dev
 ```
 
 ## Commands Reference
@@ -145,38 +145,38 @@ curl "http://YOUR_EC2_IP:8080/echo?message=Hello"
 
 ```bash
 # Create stack
-./scripts/aws/stack.sh create <env> --key-name <name> --subnets <subnet-ids> [--instance-type t3.small]
+./scripts/aws-stack.sh create <env> --key-name <name> --subnets <subnet-ids> [--instance-type t3.small]
 
 # Delete stack
-./scripts/aws/stack.sh delete <env>
+./scripts/aws-stack.sh delete <env>
 
 # Show stack status
-./scripts/aws/stack.sh status <env>
+./scripts/aws-stack.sh status <env>
 
 # Show stack outputs (IPs, URLs, etc.)
-./scripts/aws/stack.sh outputs <env>
+./scripts/aws-stack.sh outputs <env>
 
 # Show recent events (for debugging)
-./scripts/aws/stack.sh events <env>
+./scripts/aws-stack.sh events <env>
 
 # List all hello-erlang stacks
-./scripts/aws/stack.sh list
+./scripts/aws-stack.sh list
 
 # Update stack (after template changes)
-./scripts/aws/stack.sh update <env>
+./scripts/aws-stack.sh update <env>
 ```
 
 ### Application Deployment
 
 ```bash
 # Deploy application (build + upload + restart)
-./scripts/aws/deploy.sh <env>
+./scripts/aws-deploy.sh <env>
 
 # Deploy without rebuilding (faster, uses existing tarball)
-./scripts/aws/deploy.sh <env> --skip-build
+./scripts/aws-deploy.sh <env> --skip-build
 
 # Deploy with custom SSH key
-./scripts/aws/deploy.sh <env> --key-file ~/.ssh/my-key.pem
+./scripts/aws-deploy.sh <env> --key-file ~/.ssh/my-key.pem
 ```
 
 ## Environments
@@ -200,7 +200,7 @@ Available options:
 
 Specify during stack creation:
 ```bash
-./scripts/aws/stack.sh create prod --key-name my-key --subnets subnet-xxx,subnet-yyy --instance-type t3.medium
+./scripts/aws-stack.sh create prod --key-name my-key --subnets subnet-xxx,subnet-yyy --instance-type t3.medium
 ```
 
 ## Workflow Examples
@@ -211,7 +211,7 @@ Specify during stack creation:
 # One-time setup (get subnet IDs first)
 SUBNETS=$(aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" \
   --query 'Subnets[0:2].SubnetId' --output text | tr '\t' ',')
-./scripts/aws/stack.sh create dev --key-name my-key --subnets $SUBNETS
+./scripts/aws-stack.sh create dev --key-name my-key --subnets $SUBNETS
 
 # Iterative development
 while true; do
@@ -219,15 +219,15 @@ while true; do
   vim apps/hello_erlang/src/echo_handler.erl
 
   # Deploy (30 seconds)
-  ./scripts/aws/deploy.sh dev
+  ./scripts/aws-deploy.sh dev
 
   # Test via ALB
-  ALB_DNS=$(./scripts/aws/stack.sh outputs dev | grep LoadBalancerDNS | awk '{print $4}')
+  ALB_DNS=$(./scripts/aws-stack.sh outputs dev | grep LoadBalancerDNS | awk '{print $4}')
   curl "http://${ALB_DNS}/echo?message=Test"
 done
 
 # Clean up when done
-./scripts/aws/stack.sh delete dev
+./scripts/aws-stack.sh delete dev
 ```
 
 ### Multi-Environment Deployment
@@ -238,23 +238,23 @@ SUBNETS=$(aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" \
   --query 'Subnets[0:2].SubnetId' --output text | tr '\t' ',')
 
 # Deploy to dev
-./scripts/aws/stack.sh create dev --key-name my-key --subnets $SUBNETS
-./scripts/aws/deploy.sh dev
+./scripts/aws-stack.sh create dev --key-name my-key --subnets $SUBNETS
+./scripts/aws-deploy.sh dev
 
 # Test in dev, then promote to staging
-./scripts/aws/stack.sh create staging --key-name my-key --subnets $SUBNETS --instance-type t3.medium
-./scripts/aws/deploy.sh staging
+./scripts/aws-stack.sh create staging --key-name my-key --subnets $SUBNETS --instance-type t3.medium
+./scripts/aws-deploy.sh staging
 
 # Test in staging, then promote to prod
-./scripts/aws/stack.sh create prod --key-name my-key --subnets $SUBNETS --instance-type t3.large
-./scripts/aws/deploy.sh prod
+./scripts/aws-stack.sh create prod --key-name my-key --subnets $SUBNETS --instance-type t3.large
+./scripts/aws-deploy.sh prod
 ```
 
 ## SSH Access
 
 ```bash
 # Get SSH command from stack outputs
-./scripts/aws/stack.sh outputs dev
+./scripts/aws-stack.sh outputs dev
 
 # Or construct manually
 ssh -i ~/.ssh/hello-erlang-dev.pem ec2-user@YOUR_IP
@@ -278,7 +278,7 @@ ls -la log/
 
 ```bash
 # Check events for error details
-./scripts/aws/stack.sh events dev
+./scripts/aws-stack.sh events dev
 
 # Common issues:
 # - Key pair doesn't exist in the region
@@ -341,7 +341,7 @@ Approximate AWS costs (us-east-1, on-demand):
 
 1. **Restrict SSH access**: Use your IP instead of 0.0.0.0/0
    ```bash
-   ./scripts/aws/stack.sh create dev --key-name my-key --subnets $SUBNETS --ssh-location YOUR_IP/32
+   ./scripts/aws-stack.sh create dev --key-name my-key --subnets $SUBNETS --ssh-location YOUR_IP/32
    ```
 
 2. **Application access through ALB only**: EC2 port 8080 only accepts traffic from ALB security group (not internet)
