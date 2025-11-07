@@ -50,7 +50,7 @@ get_instance_ip() {
 
 build_tarball() {
     echo "Building release tarball..."
-    ./scripts/deploy.sh package
+    rebar3 tar
 
     # Find the tarball
     TARBALL=$(find _build/default/rel -name "*.tar.gz" | head -1)

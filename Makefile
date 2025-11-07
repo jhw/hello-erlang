@@ -24,7 +24,6 @@ help:
 	@echo "Or use scripts directly:"
 	@echo "  scripts/build.sh {compile|release|clean}"
 	@echo "  scripts/dev.sh {start|stop|restart|status|ping}"
-	@echo "  scripts/deploy.sh {package}"
 	@echo "  scripts/aws/stack.sh {create|delete|list|...}"
 	@echo "  scripts/aws/deploy.sh <env>"
 
@@ -81,4 +80,8 @@ console:
 
 # Deployment targets
 package:
-	@scripts/deploy.sh package
+	@echo "Building release tarball..."
+	@rebar3 tar
+	@echo ""
+	@echo "✓ Tarball created:"
+	@find _build/default/rel -name "*.tar.gz" -exec ls -lh {} \;
