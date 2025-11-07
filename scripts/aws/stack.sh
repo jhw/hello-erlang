@@ -15,7 +15,7 @@ if [ -f "config/aws-local.sh" ]; then
     source "config/aws-local.sh"
 fi
 
-TEMPLATE_FILE="aws/cloudformation/ec2-stack.yaml"
+TEMPLATE_FILE="config/ec2-stack.yaml"
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
