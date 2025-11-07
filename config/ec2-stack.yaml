@@ -4,7 +4,6 @@ Description: 'Hello Erlang - EC2 deployment stack'
 Parameters:
   Environment:
     Type: String
-    Default: dev
     AllowedValues:
       - dev
       - staging
@@ -13,7 +12,6 @@ Parameters:
 
   InstanceType:
     Type: String
-    Default: t3.small
     AllowedValues:
       - t3.micro
       - t3.small
@@ -27,7 +25,6 @@ Parameters:
 
   SSHLocation:
     Type: String
-    Default: 0.0.0.0/0
     Description: IP address range that can SSH to the instance
     AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
     ConstraintDescription: Must be a valid IP CIDR range (x.x.x.x/x)

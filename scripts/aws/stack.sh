@@ -27,14 +27,18 @@ usage() {
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
-    echo "Options for create/update:"
-    echo "  --key-name <name>         - EC2 key pair name (required for create)"
+    echo "Options for create:"
+    echo "  --key-name <name>         - EC2 key pair name (required*)"
     echo "  --instance-type <type>    - EC2 instance type (default: t3.small)"
     echo "  --ssh-location <cidr>     - SSH access CIDR (default: 0.0.0.0/0)"
-    echo "  --subnets <subnet-ids>    - Comma-separated subnet IDs for ALB (required for create)"
+    echo "  --subnets <subnet-ids>    - Comma-separated subnet IDs for ALB (required*)"
     echo "                              Must be at least 2 subnets in different AZs"
     echo ""
-    echo "Note: To get default VPC subnet IDs, run:"
+    echo "* Required unless set as DEFAULT_* variables in config/aws.sh"
+    echo ""
+    echo "To set defaults, copy config/aws.sh.example to config/aws.sh and customize."
+    echo ""
+    echo "To get default VPC subnet IDs, run:"
     echo "  aws ec2 describe-subnets --filters \"Name=default-for-az,Values=true\" \\"
     echo "    --query 'Subnets[*].[SubnetId,AvailabilityZone]' --output table"
     exit 1
@@ -50,12 +54,13 @@ create_stack() {
     shift
     local stack_name=$(get_stack_name $env)
 
-    # Parse options
-    local key_name=""
-    local instance_type="t3.small"
-    local ssh_location="0.0.0.0/0"
-    local subnets=""
+    # Apply defaults from config/aws.sh if set, otherwise use hardcoded defaults
+    local key_name="${DEFAULT_KEY_NAME:-}"
+    local instance_type="${DEFAULT_INSTANCE_TYPE:-t3.small}"
+    local ssh_location="${DEFAULT_SSH_LOCATION:-0.0.0.0/0}"
+    local subnets="${DEFAULT_ALB_SUBNETS:-}"
 
+    # Parse command-line options (these override defaults)
     while [[ $# -gt 0 ]]; do
         case $1 in
             --key-name)
@@ -82,7 +87,7 @@ create_stack() {
     done
 
     if [ -z "$key_name" ]; then
-        echo "Error: --key-name is required for creating a stack"
+        echo "Error: --key-name is required (or set DEFAULT_KEY_NAME in config/aws.sh)"
         echo ""
         echo "Available key pairs:"
         aws ec2 describe-key-pairs --query 'KeyPairs[*].KeyName' --output table
@@ -90,13 +95,15 @@ create_stack() {
     fi
 
     if [ -z "$subnets" ]; then
-        echo "Error: --subnets is required for creating a stack"
+        echo "Error: --subnets is required (or set DEFAULT_ALB_SUBNETS in config/aws.sh)"
         echo ""
         echo "To get default VPC subnet IDs, run:"
         echo "  aws ec2 describe-subnets --filters \"Name=default-for-az,Values=true\" \\"
         echo "    --query 'Subnets[*].[SubnetId,AvailabilityZone]' --output table"
         echo ""
-        echo "Then use: --subnets subnet-xxxxx,subnet-yyyyy"
+        echo "Then either:"
+        echo "  1. Use command line: --subnets subnet-xxxxx,subnet-yyyyy"
+        echo "  2. Set in config/aws.sh: export DEFAULT_ALB_SUBNETS=subnet-xxxxx,subnet-yyyyy"
         exit 1
     fi
 

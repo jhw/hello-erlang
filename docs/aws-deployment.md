@@ -19,14 +19,17 @@ This guide covers deploying Hello Erlang to AWS EC2 using CloudFormation.
    # Sets default region and credentials in ~/.aws/config
    ```
 
-2. **Local AWS config** (optional)
+2. **Local AWS config** (optional but recommended)
    ```bash
    # Copy example config
    cp config/aws.sh.example config/aws.sh
 
    # Edit to customize (gitignored)
+   # Set defaults for key name, subnets, instance type, SSH location, etc.
    vim config/aws.sh
    ```
+
+   This allows you to set defaults (like `DEFAULT_KEY_NAME` and `DEFAULT_ALB_SUBNETS`) so you don't have to specify them on every command.
 
 3. **EC2 Key Pair** created in your AWS region
    ```bash
@@ -53,7 +56,29 @@ This guide covers deploying Hello Erlang to AWS EC2 using CloudFormation.
 
 ## Quick Start
 
-### 1. Create Infrastructure
+### Option A: With config/aws.sh (Recommended)
+
+```bash
+# 1. Set up local config
+cp config/aws.sh.example config/aws.sh
+
+# 2. Get your subnet IDs
+aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" \
+  --query 'Subnets[*].[SubnetId,AvailabilityZone]' --output table
+
+# 3. Edit config/aws.sh and set:
+#    export DEFAULT_KEY_NAME=hello-erlang-dev
+#    export DEFAULT_ALB_SUBNETS=subnet-xxxxx,subnet-yyyyy
+vim config/aws.sh
+
+# 4. Create stack (no parameters needed - uses defaults from config)
+./scripts/aws/stack.sh create dev
+
+# This takes 3-5 minutes
+# Creates: ALB, Target Group, EC2 instance, Security Groups, Elastic IP, IAM roles
+```
+
+### Option B: Without config/aws.sh (Command-line parameters)
 
 ```bash
 # Get subnet IDs for ALB (copy 2 subnet IDs from output)
