@@ -13,10 +13,10 @@
 # export AWS_PROFILE=work
 
 # Stack Configuration
-# Uncomment to override stack name prefix
+# Uncomment to override stack name prefix (default: hello-erlang)
 # export STACK_PREFIX=my-erlang-app
 
-# Uncomment to use a different deployment directory on EC2
+# Uncomment to change deployment directory on EC2 (default: /opt/hello_erlang)
 # export DEPLOY_DIR=/opt/my_app
 
 # CloudFormation Parameter Defaults
