@@ -1,0 +1,6 @@
+-sname hello_erlang
+
+-setcookie hello_erlang_cookie
+
++K true
++A30
