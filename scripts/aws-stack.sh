@@ -29,40 +29,21 @@ usage() {
     echo "Environments: dev, staging, prod"
     echo ""
     echo "Options for deploy:"
-    echo "  --key-name <name>         - EC2 key pair name (optional, auto-discovers first available)"
-    echo "  --instance-type <type>    - EC2 instance type (default: t3.small)"
-    echo "  --ssh-location <cidr>     - SSH access CIDR (default: 0.0.0.0/0)"
+    echo "  --instance-type <type>    - EC2 instance type (default: t3.micro)"
     echo "  --subnets <subnet-ids>    - Comma-separated subnet IDs for ALB (optional, auto-discovers)"
-    echo "  --no-key                  - Skip SSH key pair (no SSH access)"
     echo ""
     echo "Auto-discovery:"
-    echo "  - Key pair: Uses first available key pair in your account"
     echo "  - Subnets: Uses default VPC subnets (at least 2 in different AZs)"
-    echo "  - Set DEFAULT_* variables in config/aws.sh to override"
+    echo "  - Set DEFAULT_* variables in config/env.sh to override"
+    echo ""
+    echo "Note: SSH access is not configured. Use AWS SSM Session Manager for emergency access:"
+    echo "  aws ssm start-session --target <instance-id>"
     exit 1
 }
 
 get_stack_name() {
     local env=$1
     echo "${STACK_PREFIX}-${env}"
-}
-
-auto_discover_key_pair() {
-    echo "Auto-discovering key pair..." >&2
-    local key_name=$(aws ec2 describe-key-pairs \
-        --query 'KeyPairs[0].KeyName' \
-        --output text 2>/dev/null)
-
-    if [ "$key_name" == "None" ] || [ -z "$key_name" ]; then
-        echo "" >&2
-        echo "Warning: No key pairs found in your AWS account" >&2
-        echo "Stack will be created without SSH access (SSM Session Manager only)" >&2
-        echo ""
-        return 1
-    fi
-
-    echo "  Found key pair: $key_name" >&2
-    echo "$key_name"
 }
 
 auto_discover_vpc_and_subnets() {
@@ -116,36 +97,20 @@ create_stack() {
     local stack_name=$(get_stack_name $env)
 
     # Apply defaults from config/aws.sh if set, otherwise use hardcoded defaults
-    local key_name="${DEFAULT_KEY_NAME:-}"
     local instance_type="${DEFAULT_INSTANCE_TYPE:-t3.micro}"
-    local ssh_location="${DEFAULT_SSH_LOCATION:-0.0.0.0/0}"
     local subnets="${DEFAULT_ALB_SUBNETS:-}"
     local vpc_id="${DEFAULT_VPC_ID:-}"
-    local no_key=false
 
     # Parse command-line options (these override defaults)
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --key-name)
-                key_name="$2"
-                shift 2
-                ;;
             --instance-type)
                 instance_type="$2"
-                shift 2
-                ;;
-            --ssh-location)
-                ssh_location="$2"
                 shift 2
                 ;;
             --subnets)
                 subnets="$2"
                 shift 2
-                ;;
-            --no-key)
-                no_key=true
-                key_name=""
-                shift
                 ;;
             *)
                 echo "Unknown option: $1"
@@ -153,13 +118,6 @@ create_stack() {
                 ;;
         esac
     done
-
-    # Auto-discover key pair if not provided and not explicitly disabled
-    if [ -z "$key_name" ] && [ "$no_key" = false ]; then
-        if ! key_name=$(auto_discover_key_pair); then
-            key_name=""
-        fi
-    fi
 
     # Auto-discover VPC and subnets if not provided
     if [ -z "$subnets" ]; then
@@ -190,32 +148,19 @@ create_stack() {
 
     echo "Creating stack: $stack_name"
     echo "  Environment: $env"
-    if [ -z "$key_name" ]; then
-        echo "  Key Name: (none - SSM Session Manager only)"
-    else
-        echo "  Key Name: $key_name"
-    fi
     echo "  Instance Type: $instance_type"
-    echo "  SSH Location: $ssh_location"
     echo "  VPC ID: $vpc_id"
     echo "  ALB Subnets: $subnets"
+    echo "  SSH Access: Disabled (use SSM Session Manager for emergency access)"
     echo ""
 
     # Build parameters array
     local params=(
         "ParameterKey=Environment,ParameterValue=$env"
         "ParameterKey=InstanceType,ParameterValue=$instance_type"
-        "ParameterKey=SSHLocation,ParameterValue=$ssh_location"
         "ParameterKey=VpcId,ParameterValue=$vpc_id"
         "ParameterKey=ALBSubnets,ParameterValue=\"$subnets\""
     )
-
-    # Add KeyName parameter only if provided
-    if [ -n "$key_name" ]; then
-        params+=("ParameterKey=KeyName,ParameterValue=$key_name")
-    else
-        params+=("ParameterKey=KeyName,ParameterValue=")
-    fi
 
     aws cloudformation create-stack \
         --stack-name "$stack_name" \
