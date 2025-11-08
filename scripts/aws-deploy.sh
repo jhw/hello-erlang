@@ -495,7 +495,10 @@ cmd_ping() {
         exit 1
     fi
 
-    local url="http://${alb_dns}/echo?message=${message}"
+    # URL encode the message
+    local encoded_message=$(printf %s "$message" | jq -sRr @uri)
+
+    local url="http://${alb_dns}/echo?message=${encoded_message}"
 
     echo "Testing application endpoint..."
     echo "  URL: $url"
