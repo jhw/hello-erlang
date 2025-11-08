@@ -93,9 +93,15 @@ cmd_build() {
     local timestamp=$(date +%Y%m%d-%H%M%S)
     local source_bundle="/tmp/hello_erlang_source_${timestamp}.zip"
 
+    # Copy buildspec.yml to root for CodeBuild (expects it at root)
+    cp config/aws/buildspec.yml buildspec.yml
+
     zip -q -r "$source_bundle" \
-        apps config/aws/buildspec.yml rebar.config rebar.lock \
+        apps buildspec.yml config/aws rebar.config rebar.lock \
         -x "*.git*" "*_build*" "*.rebar3*" "*.beam" "config/aws/stack.yaml" "config/env.sh"
+
+    # Clean up temporary buildspec copy
+    rm buildspec.yml
 
     echo "✓ Source bundle created: $(basename $source_bundle)"
     echo ""

@@ -184,7 +184,7 @@ Resources:
             Value: !Ref ErlangVersion
       Source:
         Type: NO_SOURCE
-        BuildSpec: config/aws/buildspec.yml
+        BuildSpec: buildspec.yml
       TimeoutInMinutes: 30
       Tags:
         - Key: Name
