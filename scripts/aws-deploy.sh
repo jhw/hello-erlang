@@ -15,7 +15,7 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {
-    echo "Usage: $0 {upload|build|start|stop|restart|status|ping} <environment> [options]"
+    echo "Usage: $0 {upload|build|start|stop|restart|status|ping|logs} <environment> [options]"
     echo ""
     echo "Commands:"
     echo "  upload <env>    - Upload source code to EC2 instance"
@@ -25,6 +25,7 @@ usage() {
     echo "  restart <env>   - Restart the application on EC2"
     echo "  status <env>    - Check application status on EC2"
     echo "  ping <env> [msg] - Test application endpoint (default message: 'ping')"
+    echo "  logs <env>      - Tail initialization logs (useful during first boot)"
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
@@ -38,6 +39,7 @@ usage() {
     echo "  4. $0 ping dev     # Verify it's responding"
     echo ""
     echo "Other examples:"
+    echo "  $0 logs dev        - Monitor UserData initialization (Erlang install)"
     echo "  $0 status dev      - Check if app is running"
     echo "  $0 restart dev     - Restart running app"
     echo "  $0 stop dev        - Stop app"
@@ -521,6 +523,39 @@ cmd_ping() {
     fi
 }
 
+cmd_logs() {
+    local env=$1
+    shift
+    local key_file=""
+
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --key-file)
+                key_file="$2"
+                shift 2
+                ;;
+            *)
+                echo "Unknown option: $1"
+                usage
+                ;;
+        esac
+    done
+
+    local instance_ip=$(get_instance_ip "$env") || exit 1
+    key_file=$(get_key_file "$env" "$key_file") || exit 1
+
+    echo "Tailing initialization logs from $instance_ip..."
+    echo "Press Ctrl+C to exit"
+    echo ""
+
+    ssh -i "$key_file" \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        "ec2-user@${instance_ip}" \
+        "tail -f /var/log/hello-erlang-init.log"
+}
+
 # Main command router
 if [ -z "$1" ] || [ -z "$2" ]; then
     usage
@@ -551,6 +586,9 @@ case "$COMMAND" in
         ;;
     ping)
         cmd_ping "$ENV" "$@"
+        ;;
+    logs)
+        cmd_logs "$ENV" "$@"
         ;;
     *)
         echo "Error: Unknown command '$COMMAND'"

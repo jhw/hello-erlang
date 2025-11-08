@@ -1,6 +1,6 @@
 ### short
 
-- python scripts
+- codebuild build
 - logging >>> chatops
 - state >>> dynamodb
 - telemetry >>> alarms?
@@ -10,3 +10,7 @@
 
 - auth
 - websockets
+
+### thoughts?
+
+- replaced python with bash
