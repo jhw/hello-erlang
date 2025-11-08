@@ -3,13 +3,13 @@
 - logging >>> chatops
 - state >>> dynamodb
 - telemetry >>> alarms?
-- python
+- python >> erlport
 
 ### medium
 
 - auth
 - websockets
 
-### thoughts?
+### thoughts
 
-- replaced python with bash
+- replace python with bash?
