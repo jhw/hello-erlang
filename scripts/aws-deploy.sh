@@ -242,7 +242,7 @@ cmd_upload() {
         --exclude='.rebar3' \
         --exclude='*.beam' \
         -C "$(pwd)" \
-        src config rebar.config rebar.lock
+        apps config rebar.config rebar.lock
 
     # Upload source tarball
     scp -i "$key_file" \
