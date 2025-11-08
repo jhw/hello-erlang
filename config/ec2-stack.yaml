@@ -38,14 +38,15 @@ Parameters:
     Type: AWS::EC2::VPC::Id
     Description: VPC ID for security groups (should match subnet VPC)
 
+  LatestAL2023AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Latest Amazon Linux 2023 AMI ID from SSM Parameter Store
+
 Conditions:
   HasKeyName: !Not [!Equals [!Ref KeyName, '']]
 
 Resources:
-  # Get latest Amazon Linux 2023 AMI ID from SSM Parameter Store
-  LatestAL2023AmiId:
-    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
   # ALB Security Group
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
