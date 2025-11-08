@@ -241,7 +241,7 @@ Outputs:
 
 ## 4. Updated EC2 Stack with DynamoDB IAM Permissions
 
-### Update config/stack.yaml
+### Update config/aws/stack.yaml
 
 Add DynamoDB permissions to the EC2 IAM role:
 
@@ -324,7 +324,7 @@ exec "$SCRIPT_DIR/aws-stack.sh" \
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-TEMPLATE_FILE="$PROJECT_ROOT/config/stack.yaml"
+TEMPLATE_FILE="$PROJECT_ROOT/config/aws/stack.yaml"
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 # Load defaults from aws.sh if it exists

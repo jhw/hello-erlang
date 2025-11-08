@@ -56,9 +56,9 @@ phases:
       - echo "Preparing deployment bundle..."
       - mkdir -p bundle
       - cp "$TARBALL" bundle/
-      - cp config/appspec.yml bundle/
-      - mkdir -p bundle/config/codedeploy
-      - cp config/codedeploy/*.sh bundle/config/codedeploy/
+      - cp config/aws/appspec.yml bundle/
+      - mkdir -p bundle/config/aws/codedeploy
+      - cp config/aws/codedeploy/*.sh bundle/config/aws/codedeploy/
       - cd bundle && tar -czf ../hello_erlang.tar.gz . && cd ..
       - echo "Deployment bundle created"
       - ls -lh hello_erlang.tar.gz
