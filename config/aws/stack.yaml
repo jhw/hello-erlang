@@ -354,7 +354,7 @@ Resources:
       Name: !Sub '${Environment}-hello-erlang-tg'
       Port: 8080
       Protocol: HTTP
-      VpcId: !GetAtt EC2Instance.VpcId
+      VpcId: !Ref VpcId
       TargetType: instance
       HealthCheckEnabled: true
       HealthCheckProtocol: HTTP
