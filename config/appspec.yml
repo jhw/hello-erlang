@@ -1,0 +1,26 @@
+version: 0.0
+os: linux
+files:
+  - source: /
+    destination: /opt/hello_erlang
+hooks:
+  ApplicationStop:
+    - location: scripts/codedeploy/stop_application.sh
+      timeout: 60
+      runas: ec2-user
+  BeforeInstall:
+    - location: scripts/codedeploy/before_install.sh
+      timeout: 60
+      runas: ec2-user
+  AfterInstall:
+    - location: scripts/codedeploy/after_install.sh
+      timeout: 60
+      runas: ec2-user
+  ApplicationStart:
+    - location: scripts/codedeploy/start_application.sh
+      timeout: 120
+      runas: ec2-user
+  ValidateService:
+    - location: scripts/codedeploy/validate_service.sh
+      timeout: 60
+      runas: ec2-user

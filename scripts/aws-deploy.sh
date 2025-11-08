@@ -5,9 +5,9 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-# Load local AWS config if it exists (gitignored)
-if [ -f "config/aws.sh" ]; then
-    source "config/aws.sh"
+# Load local environment config if it exists (gitignored)
+if [ -f "config/env.sh" ]; then
+    source "config/env.sh"
 fi
 
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
@@ -15,39 +15,37 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {
-    echo "Usage: $0 {build|deploy|start|stop|restart|status|ping|list-builds|list-artifacts|logs|init-status} <environment> [options]"
+    echo "Usage: $0 {build|rollback|deployment-status|ping|list-builds|list-artifacts|logs} <environment> [options]"
     echo ""
-    echo "Build & Deploy Commands:"
-    echo "  build <env>              - Build release in CodeBuild (outputs to S3)"
-    echo "  deploy <env> [build]     - Deploy release from S3 to EC2 (latest or specific build-id)"
-    echo "  list-builds <env>        - List recent CodeBuild builds"
-    echo "  list-artifacts <env>     - List available releases in S3"
-    echo "  logs <env> <build-id>    - Show logs for a CodeBuild build"
+    echo "Build Commands:"
+    echo "  build <env>                     - Build release in CodeBuild (auto-deploys via CodeDeploy)"
+    echo "  list-builds <env>               - List recent CodeBuild builds"
+    echo "  list-artifacts <env>            - List available releases in S3"
+    echo "  logs <env> <build-id>           - Show logs for a CodeBuild build"
     echo ""
-    echo "Application Commands:"
-    echo "  start <env>              - Start the application on EC2"
-    echo "  stop <env>               - Stop the application on EC2"
-    echo "  restart <env>            - Restart the application on EC2"
-    echo "  status <env>             - Check application status on EC2"
-    echo "  ping <env> [msg]         - Test application endpoint (default message: 'ping')"
-    echo "  init-status <env>        - Check if EC2 instance initialization is complete"
+    echo "Deployment Commands:"
+    echo "  rollback <env> <build-id>       - Deploy a specific previous build"
+    echo "  deployment-status <env> [id]    - Check CodeDeploy deployment status"
+    echo "  ping <env> [msg]                - Test application endpoint via ALB"
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
-    echo "Options:"
-    echo "  --key-file <path>  - SSH key file path (default: auto-discover from stack)"
-    echo ""
     echo "Deployment workflow:"
-    echo "  1. $0 build dev             # Build in CodeBuild → S3"
-    echo "  2. $0 list-artifacts dev    # See what's available"
-    echo "  3. $0 deploy dev            # Deploy latest from S3 → EC2"
-    echo "  4. $0 start dev             # Start application"
-    echo "  5. $0 ping dev              # Verify it's responding"
+    echo "  1. $0 build dev                 # Build in CodeBuild → S3 → Auto-deploy via CodeDeploy"
+    echo "  2. $0 deployment-status dev     # Check deployment status"
+    echo "  3. $0 ping dev                  # Verify application is responding"
+    echo ""
+    echo "Rollback workflow:"
+    echo "  1. $0 list-artifacts dev        # Find previous build-id"
+    echo "  2. $0 rollback dev abc123       # Deploy previous build"
     echo ""
     echo "Other examples:"
-    echo "  $0 deploy dev abc123        # Deploy specific build-id"
-    echo "  $0 logs dev abc123          # View build logs"
-    echo "  $0 list-builds dev          # See recent builds"
+    echo "  $0 logs dev abc123              # View build logs"
+    echo "  $0 list-builds dev              # See recent builds"
+    echo ""
+    echo "NOTE: Deployments now happen automatically via AWS CodeDeploy."
+    echo "      The 'deploy', 'start', 'stop', 'status' commands have been removed."
+    echo "      Use 'rollback' to deploy a specific build or 'deployment-status' to check progress."
     exit 1
 }
 
@@ -63,99 +61,13 @@ get_stack_output() {
         --output text 2>/dev/null
 }
 
-get_instance_ip() {
-    local env=$1
-    local ip=$(get_stack_output "$env" "PublicIP")
-
-    if [ -z "$ip" ]; then
-        echo "Error: Could not get instance IP for environment '$env'" >&2
-        echo "Make sure the stack exists: ./scripts/aws-stack.sh status $env" >&2
-        return 1
-    fi
-
-    echo "$ip"
-}
-
-get_key_file() {
-    local env=$1
-    local key_file="$2"
-
-    if [ -z "$key_file" ]; then
-        local stack_name="${STACK_PREFIX}-${env}"
-        local key_name=$(aws cloudformation describe-stacks \
-            --stack-name "$stack_name" \
-            --query "Stacks[0].Parameters[?ParameterKey=='KeyName'].ParameterValue" \
-            --output text 2>/dev/null)
-
-        if [ -z "$key_name" ] || [ "$key_name" == "None" ]; then
-            echo "Error: No SSH key configured for this stack" >&2
-            echo "Use SSM Session Manager or specify --key-file" >&2
-            return 1
-        fi
-
-        key_file="$HOME/.ssh/${key_name}.pem"
-    fi
-
-    if [ ! -f "$key_file" ]; then
-        echo "Error: SSH key file not found: $key_file" >&2
-        return 1
-    fi
-
-    echo "$key_file"
-}
-
-check_app_extracted() {
-    local instance_ip=$1
-    local key_file=$2
-
-    ssh -i "$key_file" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        -o ConnectTimeout=5 \
-        "ec2-user@${instance_ip}" \
-        "test -f ${DEPLOY_DIR}/bin/${RELEASE_NAME}" 2>/dev/null
-}
+# Removed SSH-based helper functions (get_instance_ip, get_key_file, check_app_extracted)
+# These are no longer needed with CodeDeploy automation
 
 # Command implementations
 cmd_build() {
     local env=$1
     shift
-    local key_file=""
-
-    # Parse options
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --key-file)
-                key_file="$2"
-                shift 2
-                ;;
-            *)
-                echo "Unknown option: $1"
-                usage
-                ;;
-        esac
-    done
-
-    local instance_ip=$(get_instance_ip "$env") || exit 1
-    key_file=$(get_key_file "$env" "$key_file") || exit 1
-
-    # Safety check: is app currently running?
-    if check_app_extracted "$instance_ip" "$key_file"; then
-        echo "Checking if application is running..."
-        if ssh -i "$key_file" \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=5 \
-            "ec2-user@${instance_ip}" \
-            "cd ${DEPLOY_DIR} && ./bin/${RELEASE_NAME} pid > /dev/null 2>&1"; then
-
-            echo ""
-            echo "Error: Application is currently running"
-            echo "Please stop the application before uploading:"
-            echo "  $0 stop $env"
-            exit 1
-        fi
-    fi
 
     # Get stack outputs
     local codebuild_project=$(get_stack_output "$env" "CodeBuildProjectName")
@@ -287,7 +199,11 @@ cmd_build() {
         echo "Build ID: $build_id"
         echo "Artifact location: s3://${artifact_bucket}/releases/${build_id#*:}/"
         echo ""
-        echo "Next step: $0 deploy $env"
+        echo "AWS CodeDeploy will automatically deploy this release to EC2."
+        echo ""
+        echo "Next steps:"
+        echo "  $0 deployment-status $env     # Check deployment progress"
+        echo "  $0 ping $env                  # Verify application is responding"
     else
         echo "✗ CodeBuild failed with status: $status"
         echo ""
@@ -297,317 +213,180 @@ cmd_build() {
     fi
 }
 
-cmd_deploy() {
+cmd_rollback() {
     local env=$1
-    shift
-    local build_id_param=""
-    local key_file=""
+    local build_id=$2
 
-    # Parse options
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --key-file)
-                key_file="$2"
-                shift 2
-                ;;
-            *)
-                # Assume first non-option arg is build-id
-                if [ -z "$build_id_param" ]; then
-                    build_id_param="$1"
-                    shift
-                else
-                    echo "Unknown option: $1"
-                    usage
-                fi
-                ;;
-        esac
-    done
+    if [ -z "$build_id" ]; then
+        echo "Error: build-id required"
+        echo "Usage: $0 rollback <env> <build-id>"
+        echo ""
+        echo "Get build-id from: $0 list-artifacts $env"
+        exit 1
+    fi
 
     # Get stack outputs
     local artifact_bucket=$(get_stack_output "$env" "ArtifactBucketName")
-    local instance_ip=$(get_instance_ip "$env") || exit 1
-    key_file=$(get_key_file "$env" "$key_file") || exit 1
+    local codedeploy_app=$(get_stack_output "$env" "CodeDeployApplicationName")
+    local deployment_group=$(get_stack_output "$env" "DeploymentGroupName")
 
-    if [ -z "$artifact_bucket" ]; then
-        echo "Error: Could not get artifact bucket name from stack outputs"
+    if [ -z "$artifact_bucket" ] || [ -z "$codedeploy_app" ] || [ -z "$deployment_group" ]; then
+        echo "Error: Could not get required stack outputs"
         exit 1
     fi
 
-    echo "=== Deploying Release from S3 to EC2 ==="
-    echo "  Artifact Bucket: $artifact_bucket"
-    echo "  EC2 Instance: $instance_ip"
+    echo "=== Rolling back to previous build ==="
+    echo "  Environment: $env"
+    echo "  Build ID: $build_id"
     echo ""
 
-    # Find artifact in S3
-    local artifact_key
-    if [ -n "$build_id_param" ]; then
-        echo "Looking for build: $build_id_param"
-        artifact_key=$(aws s3 ls "s3://${artifact_bucket}/releases/${build_id_param}/" --recursive | \
-            grep "\.tar\.gz$" | awk '{print $4}' | head -1)
-    else
-        echo "Finding latest build..."
-        # Find the most recent artifact
-        artifact_key=$(aws s3 ls "s3://${artifact_bucket}/releases/" --recursive | \
-            grep "\.tar\.gz$" | sort -r | head -1 | awk '{print $4}')
-    fi
+    # Find artifact for build-id
+    echo "Looking for artifact with build ID: $build_id"
+    local artifact_key=$(aws s3 ls "s3://${artifact_bucket}/releases/${build_id}/" --recursive | \
+        grep "\.tar\.gz$" | awk '{print $4}' | head -1)
 
     if [ -z "$artifact_key" ]; then
-        echo "✗ No release artifacts found in S3"
+        echo "✗ Error: No artifact found for build ID: $build_id"
         echo ""
-        if [ -n "$build_id_param" ]; then
-            echo "Build ID '$build_id_param' not found."
-        else
-            echo "No builds exist yet. Run: $0 build $env"
-        fi
+        echo "Available builds:"
+        aws s3 ls "s3://${artifact_bucket}/releases/" --recursive | grep "\.tar\.gz$" | \
+            awk '{print $4}' | sed 's|releases/\([^/]*\)/.*|\1|' | sort -u
         exit 1
     fi
 
-    local tarball_name=$(basename "$artifact_key")
-    echo "✓ Found artifact: $artifact_key"
+    echo "✓ Found artifact: s3://${artifact_bucket}/${artifact_key}"
     echo ""
 
-    # Check if app is currently running
-    if check_app_extracted "$instance_ip" "$key_file"; then
-        echo "Checking if application is running..."
-        if ssh -i "$key_file" \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=5 \
-            "ec2-user@${instance_ip}" \
-            "cd ${DEPLOY_DIR} && ./bin/${RELEASE_NAME} pid > /dev/null 2>&1"; then
+    # Create CodeDeploy deployment
+    echo "Creating CodeDeploy deployment..."
+    local deployment_id=$(aws deploy create-deployment \
+        --application-name "$codedeploy_app" \
+        --deployment-group-name "$deployment_group" \
+        --s3-location bucket="$artifact_bucket",key="$artifact_key",bundleType=tgz \
+        --description "Manual rollback to build: $build_id" \
+        --query 'deploymentId' \
+        --output text)
 
-            echo "⚠ Application is currently running - stopping it first..."
-            ssh -i "$key_file" \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
-                "ec2-user@${instance_ip}" \
-                "cd ${DEPLOY_DIR} && ./bin/${RELEASE_NAME} stop" || true
-            sleep 2
-            echo "✓ Application stopped"
+    if [ -z "$deployment_id" ]; then
+        echo "✗ Error: Failed to create deployment"
+        exit 1
+    fi
+
+    echo "✓ Deployment created: $deployment_id"
+    echo ""
+    echo "Monitoring deployment progress..."
+    echo ""
+
+    # Monitor deployment status
+    local status="Created"
+    while [[ "$status" != "Succeeded" && "$status" != "Failed" && "$status" != "Stopped" ]]; do
+        sleep 5
+        status=$(aws deploy get-deployment \
+            --deployment-id "$deployment_id" \
+            --query 'deploymentInfo.status' \
+            --output text 2>/dev/null || echo "Unknown")
+
+        echo "  Status: $status"
+    done
+
+    echo ""
+    if [ "$status" == "Succeeded" ]; then
+        echo "✓ Rollback completed successfully!"
+        echo ""
+        echo "Verify with: $0 ping $env"
+    else
+        echo "✗ Rollback failed with status: $status"
+        echo ""
+        echo "View deployment details:"
+        echo "  aws deploy get-deployment --deployment-id $deployment_id"
+        exit 1
+    fi
+}
+
+cmd_deployment_status() {
+    local env=$1
+    local deployment_id=$2
+
+    local codedeploy_app=$(get_stack_output "$env" "CodeDeployApplicationName")
+    local deployment_group=$(get_stack_output "$env" "DeploymentGroupName")
+
+    if [ -z "$codedeploy_app" ] || [ -z "$deployment_group" ]; then
+        echo "Error: Could not get CodeDeploy information from stack outputs"
+        exit 1
+    fi
+
+    # If no deployment ID provided, get the most recent one
+    if [ -z "$deployment_id" ]; then
+        echo "Finding most recent deployment..."
+        deployment_id=$(aws deploy list-deployments \
+            --application-name "$codedeploy_app" \
+            --deployment-group-name "$deployment_group" \
+            --max-items 1 \
+            --query 'deployments[0]' \
+            --output text 2>/dev/null)
+
+        if [ -z "$deployment_id" ] || [ "$deployment_id" == "None" ]; then
+            echo "No deployments found for environment '$env'"
             echo ""
+            echo "Trigger a deployment with: $0 build $env"
+            exit 0
         fi
     fi
 
-    # Download artifact to EC2
-    echo "Deploying release to EC2..."
-    ssh -i "$key_file" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        "ec2-user@${instance_ip}" bash <<EOF
-set -e
-
-cd ${DEPLOY_DIR}
-
-echo "Downloading release from S3..."
-aws s3 cp "s3://${artifact_bucket}/${artifact_key}" "${tarball_name}"
-
-echo "Backing up current release..."
-if [ -d "./bin" ]; then
-    rm -rf ./backup
-    mkdir -p ./backup
-    mv bin lib releases erts-* ./backup/ 2>/dev/null || true
-fi
-
-echo "Extracting release..."
-tar -xzf "${tarball_name}"
-
-echo "✓ Release extracted successfully"
-ls -lh ${tarball_name}
-EOF
-
-    echo ""
-    echo "✓ Deployment complete!"
-    echo ""
-    echo "Next step: $0 start $env"
-}
-
-cmd_start() {
-    local env=$1
-    shift
-    local key_file=""
-
-    # Parse options
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --key-file)
-                key_file="$2"
-                shift 2
-                ;;
-            *)
-                echo "Unknown option: $1"
-                usage
-                ;;
-        esac
-    done
-
-    local instance_ip=$(get_instance_ip "$env") || exit 1
-    key_file=$(get_key_file "$env" "$key_file") || exit 1
-
-    echo "Starting application on $instance_ip..."
+    echo "=== CodeDeploy Deployment Status ==="
+    echo "  Environment: $env"
+    echo "  Deployment ID: $deployment_id"
     echo ""
 
-    ssh -i "$key_file" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        "ec2-user@${instance_ip}" bash <<'EOF'
-set -e
+    # Get full deployment info
+    local deployment_info=$(aws deploy get-deployment \
+        --deployment-id "$deployment_id" \
+        --output json 2>/dev/null)
 
-cd /opt/hello_erlang
-
-if [ ! -f ./bin/hello_erlang ]; then
-    echo "Error: Release not found. Run upload first."
-    exit 1
-fi
-
-echo "Starting release..."
-./bin/hello_erlang daemon
-
-sleep 2
-
-echo "Checking release status..."
-if ./bin/hello_erlang pid > /dev/null 2>&1; then
-    PID=$(./bin/hello_erlang pid)
-    echo "✓ Release started successfully (PID: $PID)"
-else
-    echo "✗ Failed to start release"
-    exit 1
-fi
-EOF
-
-    echo ""
-    echo "✓ Application started successfully"
-    echo "  URL: http://${instance_ip}:8080/echo?message=Hello"
-}
-
-cmd_stop() {
-    local env=$1
-    shift
-    local key_file=""
-
-    # Parse options
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --key-file)
-                key_file="$2"
-                shift 2
-                ;;
-            *)
-                echo "Unknown option: $1"
-                usage
-                ;;
-        esac
-    done
-
-    local instance_ip=$(get_instance_ip "$env") || exit 1
-    key_file=$(get_key_file "$env" "$key_file") || exit 1
-
-    # Check if app is extracted
-    if ! check_app_extracted "$instance_ip" "$key_file"; then
-        echo "Error: Application not found on remote server"
+    if [ -z "$deployment_info" ]; then
+        echo "Error: Could not retrieve deployment information"
         exit 1
     fi
 
-    echo "Stopping application on $instance_ip..."
+    # Parse deployment details
+    local status=$(echo "$deployment_info" | jq -r '.deploymentInfo.status')
+    local description=$(echo "$deployment_info" | jq -r '.deploymentInfo.description // "N/A"')
+    local create_time=$(echo "$deployment_info" | jq -r '.deploymentInfo.createTime')
+    local complete_time=$(echo "$deployment_info" | jq -r '.deploymentInfo.completeTime // "In progress"')
 
-    ssh -i "$key_file" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        "ec2-user@${instance_ip}" bash <<EOF
-cd ${DEPLOY_DIR}
-if [ -f ./bin/${RELEASE_NAME} ]; then
-    ./bin/${RELEASE_NAME} stop || true
-    echo "✓ Application stopped"
-else
-    echo "Application not found"
-    exit 1
-fi
-EOF
-}
-
-cmd_restart() {
-    local env=$1
-    shift
-    local key_file=""
-
-    # Parse options
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --key-file)
-                key_file="$2"
-                shift 2
-                ;;
-            *)
-                echo "Unknown option: $1"
-                usage
-                ;;
-        esac
-    done
-
-    echo "Restarting application..."
-    echo ""
-
-    cmd_stop "$env" ${key_file:+--key-file "$key_file"}
-    echo ""
-    sleep 1
-    cmd_start "$env" ${key_file:+--key-file "$key_file"}
-}
-
-cmd_status() {
-    local env=$1
-    shift
-    local key_file=""
-
-    # Parse options
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --key-file)
-                key_file="$2"
-                shift 2
-                ;;
-            *)
-                echo "Unknown option: $1"
-                usage
-                ;;
-        esac
-    done
-
-    local instance_ip=$(get_instance_ip "$env") || exit 1
-    key_file=$(get_key_file "$env" "$key_file") || exit 1
-
-    echo "Checking application status on $instance_ip..."
-    echo ""
-
-    ssh -i "$key_file" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        "ec2-user@${instance_ip}" bash <<EOF
-cd ${DEPLOY_DIR}
-
-if [ ! -f ./bin/${RELEASE_NAME} ]; then
-    echo "Status: NOT DEPLOYED"
-    exit 0
-fi
-
-if ./bin/${RELEASE_NAME} pid > /dev/null 2>&1; then
-    PID=\$(./bin/${RELEASE_NAME} pid)
-    echo "Status: RUNNING (PID: \$PID)"
-
-    # Try to check the application endpoint
-    if command -v curl > /dev/null 2>&1; then
-        RESPONSE=\$(curl -s http://localhost:8080/echo?message=test 2>/dev/null || echo "")
-        if [ "\$RESPONSE" == "test" ]; then
-            echo "Health: HEALTHY (responding to requests)"
-        else
-            echo "Health: DEGRADED (not responding correctly)"
-        fi
+    echo "Status: $status"
+    echo "Description: $description"
+    echo "Created: $(date -d @$create_time 2>/dev/null || date -r $create_time)"
+    if [ "$complete_time" != "In progress" ]; then
+        echo "Completed: $(date -d @$complete_time 2>/dev/null || date -r $complete_time)"
     fi
-else
-    echo "Status: STOPPED"
-fi
-EOF
-
     echo ""
-    echo "Application URL: http://${instance_ip}:8080/echo?message=Hello"
+
+    # Show lifecycle events
+    echo "Lifecycle Events:"
+    aws deploy get-deployment \
+        --deployment-id "$deployment_id" \
+        --query 'deploymentInfo.instancesSummary' \
+        --output table
+
+    if [ "$status" == "Succeeded" ]; then
+        echo ""
+        echo "✓ Deployment successful!"
+        echo ""
+        echo "Verify application: $0 ping $env"
+    elif [ "$status" == "Failed" ] || [ "$status" == "Stopped" ]; then
+        echo ""
+        echo "✗ Deployment $status"
+        echo ""
+        echo "View detailed error information:"
+        echo "  aws deploy get-deployment --deployment-id $deployment_id"
+    elif [ "$status" == "InProgress" ] || [ "$status" == "Created" ]; then
+        echo ""
+        echo "⏳ Deployment in progress..."
+        echo ""
+        echo "Check again in a few moments with:"
+        echo "  $0 deployment-status $env $deployment_id"
+    fi
 }
 
 cmd_ping() {
@@ -765,65 +544,6 @@ cmd_logs() {
     fi
 }
 
-cmd_init_status() {
-    local env=$1
-    shift
-    local key_file=""
-
-    # Parse options
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --key-file)
-                key_file="$2"
-                shift 2
-                ;;
-            *)
-                echo "Unknown option: $1"
-                usage
-                ;;
-        esac
-    done
-
-    local instance_ip=$(get_instance_ip "$env") || exit 1
-    key_file=$(get_key_file "$env" "$key_file") || exit 1
-
-    echo "Checking EC2 instance readiness on $instance_ip..."
-    echo ""
-
-    # Check if deployment directory exists
-    if ssh -i "$key_file" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        -o ConnectTimeout=5 \
-        "ec2-user@${instance_ip}" \
-        "test -d ${DEPLOY_DIR}" 2>/dev/null; then
-
-        echo "✓ Deployment directory exists: ${DEPLOY_DIR}"
-
-        # Check if init log exists
-        if ssh -i "$key_file" \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "ec2-user@${instance_ip}" \
-            "test -f /var/log/hello-erlang-init.log" 2>/dev/null; then
-
-            echo "✓ EC2 initialization complete"
-            echo ""
-            echo "Instance is ready. You can now run:"
-            echo "  ./scripts/aws-deploy.sh build $env"
-        else
-            echo "⏳ EC2 initialization still in progress"
-            echo ""
-            echo "Wait a moment and try again."
-        fi
-    else
-        echo "⏳ EC2 instance still initializing..."
-        echo ""
-        echo "UserData script is running. This usually takes 30-60 seconds."
-        echo "Wait a moment and try again."
-    fi
-}
-
 # Main command router
 if [ -z "$1" ] || [ -z "$2" ]; then
     usage
@@ -837,8 +557,11 @@ case "$COMMAND" in
     build)
         cmd_build "$ENV" "$@"
         ;;
-    deploy)
-        cmd_deploy "$ENV" "$@"
+    rollback)
+        cmd_rollback "$ENV" "$@"
+        ;;
+    deployment-status)
+        cmd_deployment_status "$ENV" "$@"
         ;;
     list-builds)
         cmd_list_builds "$ENV" "$@"
@@ -849,23 +572,24 @@ case "$COMMAND" in
     logs)
         cmd_logs "$ENV" "$@"
         ;;
-    start)
-        cmd_start "$ENV" "$@"
-        ;;
-    stop)
-        cmd_stop "$ENV" "$@"
-        ;;
-    restart)
-        cmd_restart "$ENV" "$@"
-        ;;
-    status)
-        cmd_status "$ENV" "$@"
-        ;;
     ping)
         cmd_ping "$ENV" "$@"
         ;;
-    init-status)
-        cmd_init_status "$ENV" "$@"
+    # Deprecated commands - removed in favor of CodeDeploy automation
+    deploy|start|stop|restart|status|init-status)
+        echo "Error: The '$COMMAND' command has been removed."
+        echo ""
+        echo "This project now uses AWS CodeDeploy for automated deployments."
+        echo "Deployments happen automatically when you run: $0 build $ENV"
+        echo ""
+        echo "Available commands:"
+        echo "  build                  - Build and automatically deploy"
+        echo "  rollback <build-id>    - Deploy a specific previous build"
+        echo "  deployment-status      - Check deployment progress"
+        echo "  ping                   - Test application endpoint"
+        echo ""
+        echo "For help: $0 --help"
+        exit 1
         ;;
     *)
         echo "Error: Unknown command '$COMMAND'"

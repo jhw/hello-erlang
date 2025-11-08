@@ -5,9 +5,9 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-# Load local AWS config if it exists (gitignored)
-if [ -f "config/aws.sh" ]; then
-    source "config/aws.sh"
+# Load local environment config if it exists (gitignored)
+if [ -f "config/env.sh" ]; then
+    source "config/env.sh"
 fi
 
 TEMPLATE_FILE="config/ec2-stack.yaml"

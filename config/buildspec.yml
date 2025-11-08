@@ -51,12 +51,21 @@ phases:
       - echo "Built tarball - $TARBALL"
       - TARBALL_NAME=$(basename "$TARBALL")
       - echo "Tarball name - $TARBALL_NAME"
+      - echo "Preparing CodeDeploy bundle..."
+      - mkdir -p codedeploy-bundle
+      - cp "$TARBALL" codedeploy-bundle/
+      - cp config/appspec.yml codedeploy-bundle/
+      - mkdir -p codedeploy-bundle/scripts/codedeploy
+      - cp scripts/codedeploy/*.sh codedeploy-bundle/scripts/codedeploy/
+      - cd codedeploy-bundle && tar -czf ../hello_erlang_codedeploy.tar.gz . && cd ..
+      - echo "CodeDeploy bundle created"
+      - ls -lh hello_erlang_codedeploy.tar.gz
 
 artifacts:
   files:
-    - '_build/prod/rel/**/*.tar.gz'
+    - 'hello_erlang_codedeploy.tar.gz'
   name: release-$(date +%Y%m%d-%H%M%S)
-  discard-paths: no
+  discard-paths: yes
 
 cache:
   paths:

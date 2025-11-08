@@ -22,3 +22,6 @@ rebar3.crashdump
 # SSH keys (never commit)
 *.pem
 *.key
+
+# Local environment configuration
+config/env.sh

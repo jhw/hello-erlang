@@ -106,6 +106,7 @@ Resources:
   # S3 Bucket for build artifacts
   ArtifactBucket:
     Type: AWS::S3::Bucket
+    DependsOn: LambdaInvokePermission
     Properties:
       BucketName: !Sub '${Environment}-hello-erlang-artifacts-${AWS::AccountId}'
       VersioningConfiguration:
@@ -120,6 +121,17 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: releases/
+                  - Name: suffix
+                    Value: .tar.gz
+            Function: !GetAtt CodeDeployTriggerLambda.Arn
       Tags:
         - Key: Name
           Value: !Sub '${Environment}-hello-erlang-artifacts'
@@ -233,6 +245,14 @@ Resources:
                 Resource:
                   - !GetAtt ArtifactBucket.Arn
                   - !Sub '${ArtifactBucket.Arn}/*'
+        - PolicyName: CodeDeployAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codedeploy:*
+                Resource: '*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -286,7 +306,18 @@ Resources:
           # - unixODBC: Database connectivity support
           # - zlib: Compression support
           # - aws-cli: For downloading releases from S3
-          yum install -y ncurses-libs openssl-libs unixODBC zlib aws-cli
+          # - ruby: Required by CodeDeploy Agent
+          yum install -y ncurses-libs openssl-libs unixODBC zlib aws-cli ruby wget
+
+          # Install CodeDeploy Agent
+          echo "Installing CodeDeploy Agent..."
+          cd /tmp
+          wget https://aws-codedeploy-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/install
+          chmod +x ./install
+          ./install auto
+          systemctl start codedeploy-agent
+          systemctl enable codedeploy-agent
+          echo "CodeDeploy Agent installed and started"
 
           # Create deployment directory
           mkdir -p /opt/hello_erlang
@@ -294,7 +325,7 @@ Resources:
 
           # Signal successful initialization
           echo "Hello Erlang EC2 instance initialized successfully" > /var/log/hello-erlang-init.log
-          echo "Instance ready to receive Erlang release from CodeBuild" >> /var/log/hello-erlang-init.log
+          echo "Instance ready to receive deployments via CodeDeploy" >> /var/log/hello-erlang-init.log
           echo "Initialization completed at $(date)" >> /var/log/hello-erlang-init.log
       Tags:
         - Key: Name
@@ -370,6 +401,197 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
 
+  # CodeDeploy Application
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Sub '${Environment}-hello-erlang'
+      ComputePlatform: Server
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-hello-erlang-codedeploy-app'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # CodeDeploy Service Role
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-hello-erlang-codedeploy-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodeDeployRole
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # CodeDeploy Deployment Group
+  CodeDeployDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: !Sub '${Environment}-hello-erlang-dg'
+      ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+      Ec2TagFilters:
+        - Type: KEY_AND_VALUE
+          Key: Environment
+          Value: !Ref Environment
+        - Type: KEY_AND_VALUE
+          Key: Application
+          Value: hello-erlang
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+          - DEPLOYMENT_STOP_ON_ALARM
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-hello-erlang-deployment-group'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # Lambda Execution Role (for CodeDeploy trigger)
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-hello-erlang-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CodeDeployTrigger
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codedeploy:CreateDeployment
+                  - codedeploy:GetDeploymentConfig
+                  - codedeploy:GetApplicationRevision
+                  - codedeploy:RegisterApplicationRevision
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub '${ArtifactBucket.Arn}/*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # Lambda Function (CodeDeploy trigger)
+  CodeDeployTriggerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-hello-erlang-deploy-trigger'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      Environment:
+        Variables:
+          CODEDEPLOY_APP: !Ref CodeDeployApplication
+          DEPLOYMENT_GROUP: !Ref CodeDeployDeploymentGroup
+          S3_BUCKET: !Ref ArtifactBucket
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import json
+
+          codedeploy = boto3.client('codedeploy')
+
+          def handler(event, context):
+              print(f"Received event: {json.dumps(event)}")
+
+              # Parse S3 event
+              bucket = event['Records'][0]['s3']['bucket']['name']
+              key = event['Records'][0]['s3']['object']['key']
+
+              print(f"S3 object: s3://{bucket}/{key}")
+
+              # Only process .tar.gz files in releases/
+              if not key.startswith('releases/') or not key.endswith('.tar.gz'):
+                  print(f"Ignoring non-release artifact: {key}")
+                  return {'statusCode': 200, 'body': 'Ignored non-release artifact'}
+
+              # Extract build-id from key: releases/<build-id>/file.tar.gz
+              parts = key.split('/')
+              if len(parts) < 2:
+                  print(f"Invalid key format: {key}")
+                  return {'statusCode': 400, 'body': 'Invalid key format'}
+
+              build_id = parts[1]
+              print(f"Build ID: {build_id}")
+
+              # Create deployment
+              try:
+                  response = codedeploy.create_deployment(
+                      applicationName=os.environ['CODEDEPLOY_APP'],
+                      deploymentGroupName=os.environ['DEPLOYMENT_GROUP'],
+                      revision={
+                          'revisionType': 'S3',
+                          's3Location': {
+                              'bucket': bucket,
+                              'key': key,
+                              'bundleType': 'tgz'
+                          }
+                      },
+                      deploymentConfigName='CodeDeployDefault.AllAtOnce',
+                      description=f'Automated deployment from CodeBuild: {build_id}'
+                  )
+
+                  deployment_id = response['deploymentId']
+                  print(f"Deployment created: {deployment_id}")
+
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps({
+                          'deploymentId': deployment_id,
+                          'buildId': build_id
+                      })
+                  }
+              except Exception as e:
+                  print(f"Error creating deployment: {str(e)}")
+                  raise
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-hello-erlang-deploy-trigger'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # Lambda Permission for S3 to invoke
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CodeDeployTriggerLambda
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !GetAtt ArtifactBucket.Arn
+
 Outputs:
   InstanceId:
     Description: EC2 Instance ID
@@ -422,3 +644,21 @@ Outputs:
     Value: !Ref CodeBuildProject
     Export:
       Name: !Sub '${Environment}-hello-erlang-codebuild-project'
+
+  CodeDeployApplicationName:
+    Description: CodeDeploy application name
+    Value: !Ref CodeDeployApplication
+    Export:
+      Name: !Sub '${Environment}-hello-erlang-codedeploy-app'
+
+  DeploymentGroupName:
+    Description: CodeDeploy deployment group name
+    Value: !Ref CodeDeployDeploymentGroup
+    Export:
+      Name: !Sub '${Environment}-hello-erlang-deployment-group'
+
+  LambdaFunctionName:
+    Description: Lambda function name for CodeDeploy trigger
+    Value: !Ref CodeDeployTriggerLambda
+    Export:
+      Name: !Sub '${Environment}-hello-erlang-lambda-trigger'
