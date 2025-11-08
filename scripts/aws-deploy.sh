@@ -15,16 +15,17 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {
-    echo "Usage: $0 {build|start|stop|restart|status|ping|init-status} <environment> [options]"
+    echo "Usage: $0 {build|deploy|start|stop|restart|status|ping|init-status} <environment> [options]"
     echo ""
     echo "Commands:"
-    echo "  build <env>     - Build release in CodeBuild and deploy to EC2 instance"
-    echo "  start <env>     - Start the application on EC2"
-    echo "  stop <env>      - Stop the application on EC2"
-    echo "  restart <env>   - Restart the application on EC2"
-    echo "  status <env>    - Check application status on EC2"
-    echo "  ping <env> [msg] - Test application endpoint (default message: 'ping')"
-    echo "  init-status <env> - Check if EC2 instance initialization is complete"
+    echo "  build <env>          - Build release in CodeBuild (outputs to S3)"
+    echo "  deploy <env> [build] - Deploy release from S3 to EC2 (latest or specific build-id)"
+    echo "  start <env>          - Start the application on EC2"
+    echo "  stop <env>           - Stop the application on EC2"
+    echo "  restart <env>        - Restart the application on EC2"
+    echo "  status <env>         - Check application status on EC2"
+    echo "  ping <env> [msg]     - Test application endpoint (default message: 'ping')"
+    echo "  init-status <env>    - Check if EC2 instance initialization is complete"
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
@@ -32,15 +33,16 @@ usage() {
     echo "  --key-file <path>  - SSH key file path (default: auto-discover from stack)"
     echo ""
     echo "Deployment workflow:"
-    echo "  1. $0 build dev        # Build in CodeBuild and deploy to EC2"
-    echo "  2. $0 start dev        # Start application"
-    echo "  3. $0 ping dev         # Verify it's responding"
+    echo "  1. $0 build dev         # Build in CodeBuild → S3"
+    echo "  2. $0 deploy dev        # Deploy latest from S3 → EC2"
+    echo "  3. $0 start dev         # Start application"
+    echo "  4. $0 ping dev          # Verify it's responding"
     echo ""
     echo "Other examples:"
-    echo "  $0 init-status dev # Check if EC2 is ready (rarely needed)"
-    echo "  $0 status dev      # Check if app is running"
-    echo "  $0 restart dev     # Restart running app"
-    echo "  $0 stop dev        # Stop app"
+    echo "  $0 deploy dev abc123    # Deploy specific build-id"
+    echo "  $0 init-status dev      # Check if EC2 is ready"
+    echo "  $0 status dev           # Check if app is running"
+    echo "  $0 restart dev          # Restart running app"
     exit 1
 }
 
@@ -277,40 +279,122 @@ cmd_build() {
     if [ "$status" == "SUCCEEDED" ]; then
         echo "✓ CodeBuild completed successfully"
         echo ""
-
-        # Find the built artifact in S3
-        echo "Finding built release artifact..."
-        local artifact_prefix="releases/${build_id#*:}"
-        local artifact_key=$(aws s3 ls "s3://${artifact_bucket}/${artifact_prefix}/" --recursive | \
-            grep "\.tar\.gz$" | awk '{print $4}' | head -1)
-
-        if [ -z "$artifact_key" ]; then
-            echo "Error: Could not find release artifact in S3"
-            exit 1
-        fi
-
-        local tarball_name=$(basename "$artifact_key")
-        echo "✓ Found artifact: $tarball_name"
+        echo "Build ID: $build_id"
+        echo "Artifact location: s3://${artifact_bucket}/releases/${build_id#*:}/"
         echo ""
+        echo "Next step: $0 deploy $env"
+    else
+        echo "✗ CodeBuild failed with status: $status"
+        echo ""
+        echo "View logs with:"
+        echo "  aws codebuild batch-get-builds --ids $build_id"
+        exit 1
+    fi
+}
 
-        # Download artifact to EC2
-        echo "Deploying release to EC2 instance $instance_ip..."
-        ssh -i "$key_file" \
+cmd_deploy() {
+    local env=$1
+    shift
+    local build_id_param=""
+    local key_file=""
+
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --key-file)
+                key_file="$2"
+                shift 2
+                ;;
+            *)
+                # Assume first non-option arg is build-id
+                if [ -z "$build_id_param" ]; then
+                    build_id_param="$1"
+                    shift
+                else
+                    echo "Unknown option: $1"
+                    usage
+                fi
+                ;;
+        esac
+    done
+
+    # Get stack outputs
+    local artifact_bucket=$(get_stack_output "$env" "ArtifactBucketName")
+    local instance_ip=$(get_instance_ip "$env") || exit 1
+    key_file=$(get_key_file "$env" "$key_file") || exit 1
+
+    if [ -z "$artifact_bucket" ]; then
+        echo "Error: Could not get artifact bucket name from stack outputs"
+        exit 1
+    fi
+
+    echo "=== Deploying Release from S3 to EC2 ==="
+    echo "  Artifact Bucket: $artifact_bucket"
+    echo "  EC2 Instance: $instance_ip"
+    echo ""
+
+    # Find artifact in S3
+    local artifact_key
+    if [ -n "$build_id_param" ]; then
+        echo "Looking for build: $build_id_param"
+        artifact_key=$(aws s3 ls "s3://${artifact_bucket}/releases/${build_id_param}/" --recursive | \
+            grep "\.tar\.gz$" | awk '{print $4}' | head -1)
+    else
+        echo "Finding latest build..."
+        # Find the most recent artifact
+        artifact_key=$(aws s3 ls "s3://${artifact_bucket}/releases/" --recursive | \
+            grep "\.tar\.gz$" | sort -r | head -1 | awk '{print $4}')
+    fi
+
+    if [ -z "$artifact_key" ]; then
+        echo "✗ No release artifacts found in S3"
+        echo ""
+        if [ -n "$build_id_param" ]; then
+            echo "Build ID '$build_id_param' not found."
+        else
+            echo "No builds exist yet. Run: $0 build $env"
+        fi
+        exit 1
+    fi
+
+    local tarball_name=$(basename "$artifact_key")
+    echo "✓ Found artifact: $artifact_key"
+    echo ""
+
+    # Check if app is currently running
+    if check_app_extracted "$instance_ip" "$key_file"; then
+        echo "Checking if application is running..."
+        if ssh -i "$key_file" \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            "ec2-user@${instance_ip}" bash <<EOF
+            -o ConnectTimeout=5 \
+            "ec2-user@${instance_ip}" \
+            "cd ${DEPLOY_DIR} && ./bin/${RELEASE_NAME} pid > /dev/null 2>&1"; then
+
+            echo "⚠ Application is currently running - stopping it first..."
+            ssh -i "$key_file" \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                "ec2-user@${instance_ip}" \
+                "cd ${DEPLOY_DIR} && ./bin/${RELEASE_NAME} stop" || true
+            sleep 2
+            echo "✓ Application stopped"
+            echo ""
+        fi
+    fi
+
+    # Download artifact to EC2
+    echo "Deploying release to EC2..."
+    ssh -i "$key_file" \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        "ec2-user@${instance_ip}" bash <<EOF
 set -e
 
 cd ${DEPLOY_DIR}
 
 echo "Downloading release from S3..."
 aws s3 cp "s3://${artifact_bucket}/${artifact_key}" "${tarball_name}"
-
-echo "Stopping existing release (if running)..."
-if [ -f ./bin/${RELEASE_NAME} ]; then
-    ./bin/${RELEASE_NAME} stop || true
-    sleep 2
-fi
 
 echo "Backing up current release..."
 if [ -d "./bin" ]; then
@@ -322,21 +406,14 @@ fi
 echo "Extracting release..."
 tar -xzf "${tarball_name}"
 
-echo "✓ Release deployed successfully"
+echo "✓ Release extracted successfully"
 ls -lh ${tarball_name}
 EOF
 
-        echo ""
-        echo "✓ Deployment complete!"
-        echo ""
-        echo "Next step: $0 start $env"
-    else
-        echo "✗ CodeBuild failed with status: $status"
-        echo ""
-        echo "View logs with:"
-        echo "  aws codebuild batch-get-builds --ids $build_id"
-        exit 1
-    fi
+    echo ""
+    echo "✓ Deployment complete!"
+    echo ""
+    echo "Next step: $0 start $env"
 }
 
 cmd_start() {
@@ -650,6 +727,9 @@ shift 2
 case "$COMMAND" in
     build)
         cmd_build "$ENV" "$@"
+        ;;
+    deploy)
+        cmd_deploy "$ENV" "$@"
         ;;
     start)
         cmd_start "$ENV" "$@"
