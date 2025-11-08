@@ -15,11 +15,11 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {
-    echo "Usage: $0 {upload|start|stop|restart|status|ping|logs|init-status} <environment> [options]"
+    echo "Usage: $0 {build|start|stop|restart|status|ping|logs|init-status} <environment> [options]"
     echo ""
     echo "Commands:"
     echo "  init-status <env> [--follow] - Check if UserData initialization is complete"
-    echo "  upload <env>    - Build release in CodeBuild and deploy to EC2 instance"
+    echo "  build <env>     - Build release in CodeBuild and deploy to EC2 instance"
     echo "  start <env>     - Start the application on EC2"
     echo "  stop <env>      - Stop the application on EC2"
     echo "  restart <env>   - Restart the application on EC2"
@@ -34,7 +34,7 @@ usage() {
     echo ""
     echo "Deployment workflow:"
     echo "  0. $0 init-status dev  # Wait for UserData to complete"
-    echo "  1. $0 upload dev       # Build in CodeBuild and deploy to EC2"
+    echo "  1. $0 build dev        # Build in CodeBuild and deploy to EC2"
     echo "  2. $0 start dev        # Start application"
     echo "  3. $0 ping dev         # Verify it's responding"
     echo ""
@@ -138,7 +138,7 @@ check_app_extracted() {
 }
 
 # Command implementations
-cmd_upload() {
+cmd_build() {
     local env=$1
     shift
     local key_file=""
@@ -235,23 +235,68 @@ cmd_upload() {
     echo "✓ Build started: $build_id"
     echo ""
 
-    # Wait for build to complete with progress updates
-    echo "Waiting for build to complete..."
+    # Get log group and stream info
+    local log_group="/aws/codebuild/${codebuild_project}"
+    local log_stream="${build_id#*:}"
+
+    echo "Tailing CodeBuild logs (this may take a moment to start)..."
+    echo "---"
+    echo ""
+
+    # Wait for build to complete while tailing logs
     local status="IN_PROGRESS"
-    local last_phase=""
+    local next_token=""
+    local last_check=0
 
     while [ "$status" == "IN_PROGRESS" ]; do
-        sleep 10
-
-        local build_info=$(aws codebuild batch-get-builds --ids "$build_id" --query 'builds[0]')
-        status=$(echo "$build_info" | jq -r '.buildStatus')
-        local current_phase=$(echo "$build_info" | jq -r '.currentPhase // "UNKNOWN"')
-
-        if [ "$current_phase" != "$last_phase" ]; then
-            echo "  Phase: $current_phase"
-            last_phase="$current_phase"
+        # Check build status every 5 seconds
+        local now=$(date +%s)
+        if [ $((now - last_check)) -ge 5 ]; then
+            status=$(aws codebuild batch-get-builds --ids "$build_id" --query 'builds[0].buildStatus' --output text 2>/dev/null || echo "IN_PROGRESS")
+            last_check=$now
         fi
+
+        # Try to fetch and display logs
+        local log_output
+        if [ -z "$next_token" ]; then
+            log_output=$(aws logs get-log-events \
+                --log-group-name "$log_group" \
+                --log-stream-name "$log_stream" \
+                --start-from-head \
+                --output json 2>/dev/null || echo '{}')
+        else
+            log_output=$(aws logs get-log-events \
+                --log-group-name "$log_group" \
+                --log-stream-name "$log_stream" \
+                --next-token "$next_token" \
+                --start-from-head \
+                --output json 2>/dev/null || echo '{}')
+        fi
+
+        # Display log events
+        echo "$log_output" | jq -r '.events[]?.message' 2>/dev/null
+
+        # Get next token for pagination
+        local new_token=$(echo "$log_output" | jq -r '.nextForwardToken // empty' 2>/dev/null)
+        if [ -n "$new_token" ] && [ "$new_token" != "$next_token" ]; then
+            next_token="$new_token"
+        fi
+
+        sleep 2
     done
+
+    # Fetch any remaining logs
+    if [ -n "$next_token" ]; then
+        aws logs get-log-events \
+            --log-group-name "$log_group" \
+            --log-stream-name "$log_stream" \
+            --next-token "$next_token" \
+            --start-from-head \
+            --output json 2>/dev/null | jq -r '.events[]?.message' 2>/dev/null || true
+    fi
+
+    echo ""
+    echo "---"
 
     # Clean up source bundle
     rm -f "$source_bundle"
@@ -723,8 +768,8 @@ ENV=$2
 shift 2
 
 case "$COMMAND" in
-    upload)
-        cmd_upload "$ENV" "$@"
+    build)
+        cmd_build "$ENV" "$@"
         ;;
     start)
         cmd_start "$ENV" "$@"
