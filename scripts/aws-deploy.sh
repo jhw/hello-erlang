@@ -15,17 +15,16 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {
-    echo "Usage: $0 {build|ping} <environment> [options]"
+    echo "Usage: $0 build <environment>"
     echo ""
     echo "Build Commands:"
     echo "  build <env>         - Build release in CodeBuild (auto-deploys via CodeDeploy)"
-    echo "  ping <env> [msg]    - Test application endpoint via ALB"
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
     echo "Deployment workflow:"
-    echo "  1. $0 build dev     # Build in CodeBuild → S3 → Auto-deploy via CodeDeploy"
-    echo "  2. $0 ping dev      # Verify application is responding"
+    echo "  1. $0 build dev                             # Build in CodeBuild → S3 → Auto-deploy"
+    echo "  2. ./scripts/aws-debug.sh ping dev          # Verify application is responding"
     echo ""
     echo "Debugging (use aws-debug.sh):"
     echo "  ./scripts/aws-debug.sh list-builds dev         # List recent builds"
@@ -33,6 +32,7 @@ usage() {
     echo "  ./scripts/aws-debug.sh list-artifacts dev      # List available artifacts"
     echo "  ./scripts/aws-debug.sh list-deployments dev    # List recent deployments"
     echo "  ./scripts/aws-debug.sh deployment-logs dev <id> # View deployment details"
+    echo "  ./scripts/aws-debug.sh ping dev [message]       # Test application endpoint"
     echo ""
     echo "NOTE: Deployments happen automatically via AWS CodeDeploy."
     echo "      Use AWS Console or CodeDeploy API for manual rollback operations."
@@ -198,64 +198,13 @@ cmd_build() {
         echo "AWS CodeDeploy will automatically deploy this release to EC2."
         echo ""
         echo "Next steps:"
-        echo "  $0 ping $env                                # Verify application is responding"
+        echo "  ./scripts/aws-debug.sh ping $env               # Verify application is responding"
         echo "  ./scripts/aws-debug.sh list-deployments $env  # Check deployment status"
     else
         echo "✗ CodeBuild failed with status: $status"
         echo ""
         echo "View logs with:"
         echo "  aws codebuild batch-get-builds --ids $build_id"
-        exit 1
-    fi
-}
-
-cmd_ping() {
-    local env=$1
-    shift
-    local message="${1:-ping}"
-
-    # Get ALB DNS name from stack outputs
-    local alb_dns=$(get_stack_output "$env" "LoadBalancerDNS")
-    if [ -z "$alb_dns" ]; then
-        echo "Error: Could not get Load Balancer DNS for environment '$env'" >&2
-        exit 1
-    fi
-
-    # URL encode the message
-    local encoded_message=$(printf %s "$message" | jq -sRr @uri)
-
-    local url="http://${alb_dns}/echo?message=${encoded_message}"
-
-    echo "Testing application endpoint..."
-    echo "  URL: $url"
-    echo ""
-
-    if ! command -v curl &> /dev/null; then
-        echo "Error: curl not found. Please install curl."
-        exit 1
-    fi
-
-    local response=$(curl -s -w "\n%{http_code}" --connect-timeout 5 --max-time 10 "$url" 2>/dev/null)
-    local http_code=$(echo "$response" | tail -n 1)
-    local body=$(echo "$response" | sed '$d')
-
-    if [ "$http_code" == "200" ] && [ "$body" == "$message" ]; then
-        echo "✓ Application is responding"
-        echo "  Status: 200 OK"
-        echo "  Response: $body"
-    elif [ "$http_code" == "200" ]; then
-        echo "⚠ Application responded but with unexpected content"
-        echo "  Status: 200 OK"
-        echo "  Response: $body"
-        echo "  Expected: $message"
-    elif [ -n "$http_code" ]; then
-        echo "✗ Application returned error"
-        echo "  Status: $http_code"
-        echo "  Response: $body"
-        exit 1
-    else
-        echo "✗ Application not responding"
-        echo "  Could not connect to $url"
         exit 1
     fi
 }
@@ -272,9 +221,6 @@ shift 2
 case "$COMMAND" in
     build)
         cmd_build "$ENV" "$@"
-        ;;
-    ping)
-        cmd_ping "$ENV" "$@"
         ;;
     *)
         echo "Error: Unknown command '$COMMAND'"
