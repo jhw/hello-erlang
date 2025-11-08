@@ -3,7 +3,7 @@
 
 set -e
 
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/.."
 
 # Load local AWS config if it exists (gitignored)
 if [ -f "config/aws.sh" ]; then
