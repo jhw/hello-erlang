@@ -13,7 +13,7 @@ fi
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {list-builds|list-artifacts|logs|list-deployments|deployment-logs} <environment> [options]"
+    echo "Usage: $0 {list-builds|list-artifacts|logs|list-deployments|deployment-logs|instance-logs} <environment> [options]"
     echo ""
     echo "CodeBuild Commands:"
     echo "  list-builds <env>               - List recent CodeBuild builds"
@@ -26,6 +26,9 @@ usage() {
     echo "  list-deployments <env>          - List recent CodeDeploy deployments"
     echo "  deployment-logs <env> <dep-id>  - Show detailed deployment events"
     echo ""
+    echo "EC2 Commands:"
+    echo "  instance-logs <env>             - Show EC2 UserData execution logs (via SSM)"
+    echo ""
     echo "Environments: dev, staging, prod"
     echo ""
     echo "Examples:"
@@ -33,6 +36,7 @@ usage() {
     echo "  $0 logs dev abc123              # View build logs"
     echo "  $0 list-artifacts dev           # Find previous build-id for rollback"
     echo "  $0 list-deployments dev         # See recent deployments"
+    echo "  $0 instance-logs dev            # Check UserData execution"
     exit 1
 }
 
@@ -227,6 +231,92 @@ cmd_deployment_logs() {
     done
 }
 
+cmd_instance_logs() {
+    local env=$1
+
+    local instance_id=$(get_stack_output "$env" "InstanceId")
+
+    if [ -z "$instance_id" ]; then
+        echo "Error: Could not get instance ID from stack outputs"
+        exit 1
+    fi
+
+    echo "Fetching EC2 UserData execution logs for: $instance_id"
+    echo "---"
+    echo ""
+    echo "Cloud-Init Output (UserData execution):"
+    echo ""
+
+    # Use SSM to fetch logs
+    aws ssm send-command \
+        --instance-ids "$instance_id" \
+        --document-name "AWS-RunShellScript" \
+        --parameters 'commands=["tail -100 /var/log/cloud-init-output.log"]' \
+        --output text \
+        --query 'Command.CommandId' > /tmp/ssm-command-id.txt
+
+    local command_id=$(cat /tmp/ssm-command-id.txt)
+
+    # Wait for command to complete
+    sleep 3
+
+    # Get command output
+    aws ssm get-command-invocation \
+        --command-id "$command_id" \
+        --instance-id "$instance_id" \
+        --query 'StandardOutputContent' \
+        --output text
+
+    echo ""
+    echo "---"
+    echo ""
+    echo "Hello Erlang Init Log:"
+    echo ""
+
+    # Get our custom init log
+    aws ssm send-command \
+        --instance-ids "$instance_id" \
+        --document-name "AWS-RunShellScript" \
+        --parameters 'commands=["cat /var/log/hello-erlang-init.log 2>/dev/null || echo \"Init log not found\""]' \
+        --output text \
+        --query 'Command.CommandId' > /tmp/ssm-command-id2.txt
+
+    local command_id2=$(cat /tmp/ssm-command-id2.txt)
+    sleep 2
+
+    aws ssm get-command-invocation \
+        --command-id "$command_id2" \
+        --instance-id "$instance_id" \
+        --query 'StandardOutputContent' \
+        --output text
+
+    echo ""
+    echo "---"
+    echo ""
+    echo "Agent Status:"
+    echo ""
+
+    # Check agent status
+    aws ssm send-command \
+        --instance-ids "$instance_id" \
+        --document-name "AWS-RunShellScript" \
+        --parameters 'commands=["systemctl status amazon-cloudwatch-agent --no-pager -l","echo ---","systemctl status codedeploy-agent --no-pager -l"]' \
+        --output text \
+        --query 'Command.CommandId' > /tmp/ssm-command-id3.txt
+
+    local command_id3=$(cat /tmp/ssm-command-id3.txt)
+    sleep 3
+
+    aws ssm get-command-invocation \
+        --command-id "$command_id3" \
+        --instance-id "$instance_id" \
+        --query 'StandardOutputContent' \
+        --output text
+
+    # Cleanup temp files
+    rm -f /tmp/ssm-command-id*.txt
+}
+
 # Main command router
 if [ -z "$1" ] || [ -z "$2" ]; then
     usage
@@ -251,6 +341,9 @@ case "$COMMAND" in
         ;;
     deployment-logs)
         cmd_deployment_logs "$ENV" "$@"
+        ;;
+    instance-logs)
+        cmd_instance_logs "$ENV"
         ;;
     *)
         echo "Error: Unknown command '$COMMAND'"
