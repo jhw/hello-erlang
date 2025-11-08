@@ -8,8 +8,10 @@
 export AWS_REGION=eu-west-1
 export AWS_PROFILE=woldeploy
 
+# SSH Key Configuration
+export DEFAULT_KEY_NAME=jhw-keypair-mac-m1-2020
+
 # Optional Overrides (uncomment to customize)
-# export DEFAULT_KEY_NAME=jhw-keypair-x240  # Force specific SSH key
 # export DEFAULT_INSTANCE_TYPE=t3.small
 # export DEFAULT_SSH_LOCATION=0.0.0.0/0
 # export DEFAULT_ALB_SUBNETS=subnet-xxxxx,subnet-yyyyy
