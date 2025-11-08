@@ -18,9 +18,9 @@ usage() {
     echo "Usage: $0 {build|clean|upload|start|stop|restart|status|ping|deploy} <environment> [options]"
     echo ""
     echo "Commands:"
-    echo "  build <env>     - Build release tarball locally"
-    echo "  clean <env>     - Remove local tarball"
-    echo "  upload <env>    - Upload tarball to EC2 instance"
+    echo "  upload <env>    - Upload source code to EC2 instance"
+    echo "  build <env>     - Build release on EC2 server"
+    echo "  clean <env>     - Remove local tarball (deprecated)"
     echo "  start <env>     - Start the application on EC2"
     echo "  stop <env>      - Stop the application on EC2"
     echo "  restart <env>   - Restart the application on EC2"
@@ -34,13 +34,13 @@ usage() {
     echo "  --key-file <path>  - SSH key file path (default: auto-discover from stack)"
     echo ""
     echo "Examples:"
-    echo "  $0 build dev              - Build tarball for deployment"
-    echo "  $0 clean dev              - Remove local tarball"
-    echo "  $0 upload dev             - Upload tarball to dev environment"
+    echo "  $0 upload dev             - Upload source code to dev"
+    echo "  $0 build dev              - Build release on dev server"
+    echo "  $0 start dev              - Start application"
     echo "  $0 ping dev               - Test application endpoint"
     echo "  $0 ping dev Hello         - Test with custom message"
     echo "  $0 restart dev            - Restart app in dev environment"
-    echo "  $0 deploy prod            - Full deploy to production"
+    echo "  $0 deploy prod            - Full deploy: upload + build + start"
     exit 1
 }
 
@@ -138,17 +138,54 @@ check_app_extracted() {
 # Command implementations
 cmd_build() {
     local env=$1
+    shift
+    local key_file=""
 
-    echo "Building release tarball with ERTS (prod mode)..."
-    rebar3 as prod tar
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --key-file)
+                key_file="$2"
+                shift 2
+                ;;
+            *)
+                echo "Unknown option: $1"
+                usage
+                ;;
+        esac
+    done
 
-    local tarball=$(get_tarball_path)
-    if [ -z "$tarball" ]; then
-        echo "Error: Tarball not found after build"
-        exit 1
-    fi
+    local instance_ip=$(get_instance_ip "$env") || exit 1
+    key_file=$(get_key_file "$env" "$key_file") || exit 1
 
-    echo "✓ Tarball built: $tarball"
+    echo "Building release on EC2 instance $instance_ip..."
+    echo ""
+
+    # Build on remote server
+    ssh -i "$key_file" \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        "ec2-user@${instance_ip}" bash <<'EOF'
+set -e
+
+cd /opt/hello_erlang
+
+echo "Building release tarball with ERTS (prod mode)..."
+export PATH=/usr/local/erlang/bin:$PATH
+rebar3 as prod tar
+
+# Find and show the tarball
+TARBALL=$(find _build/prod/rel -name "*.tar.gz" 2>/dev/null | head -1)
+if [ -z "$TARBALL" ]; then
+    echo "Error: Tarball not found after build"
+    exit 1
+fi
+
+echo "✓ Release built: $TARBALL"
+EOF
+
+    echo ""
+    echo "✓ Build complete on server"
 }
 
 cmd_clean() {
@@ -184,15 +221,6 @@ cmd_upload() {
         esac
     done
 
-    # Check tarball exists locally
-    if ! check_tarball_exists; then
-        echo "Error: No tarball found locally"
-        echo "Run: $0 build $env"
-        exit 1
-    fi
-
-    local tarball=$(get_tarball_path)
-    local tarball_name=$(basename "$tarball")
     local instance_ip=$(get_instance_ip "$env") || exit 1
     key_file=$(get_key_file "$env" "$key_file") || exit 1
 
@@ -214,27 +242,46 @@ cmd_upload() {
         fi
     fi
 
-    echo "Uploading tarball to $instance_ip..."
-    echo "  Tarball: $tarball_name"
+    echo "Uploading source code to $instance_ip..."
+    echo "  Target: ${DEPLOY_DIR}/"
     echo "  Key: $key_file"
     echo ""
 
-    # Remove old tarball if it exists
-    ssh -i "$key_file" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        "ec2-user@${instance_ip}" \
-        "rm -f ${DEPLOY_DIR}/${tarball_name}" 2>/dev/null || true
+    # Create a tarball of source code (excluding build artifacts)
+    tar -czf /tmp/hello_erlang_src.tar.gz \
+        --exclude='.git' \
+        --exclude='_build' \
+        --exclude='.rebar3' \
+        --exclude='*.beam' \
+        -C "$(pwd)" \
+        src config rebar.config rebar.lock
 
-    # Upload new tarball
+    # Upload source tarball
     scp -i "$key_file" \
         -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null \
-        "$tarball" \
-        "ec2-user@${instance_ip}:${DEPLOY_DIR}/"
+        /tmp/hello_erlang_src.tar.gz \
+        "ec2-user@${instance_ip}:/tmp/"
+
+    # Extract source on server
+    ssh -i "$key_file" \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        "ec2-user@${instance_ip}" bash <<EOF
+set -e
+cd ${DEPLOY_DIR}
+tar -xzf /tmp/hello_erlang_src.tar.gz
+rm -f /tmp/hello_erlang_src.tar.gz
+echo "✓ Source code extracted"
+EOF
+
+    # Clean up local temp file
+    rm -f /tmp/hello_erlang_src.tar.gz
 
     echo ""
-    echo "✓ Tarball uploaded successfully"
+    echo "✓ Source code uploaded successfully"
+    echo ""
+    echo "Next step: $0 build $env"
 }
 
 cmd_start() {
@@ -259,30 +306,29 @@ cmd_start() {
     local instance_ip=$(get_instance_ip "$env") || exit 1
     key_file=$(get_key_file "$env" "$key_file") || exit 1
 
-    # Check if tarball is on remote
-    if ! check_tarball_on_remote "$instance_ip" "$key_file"; then
-        echo "Error: Tarball not found on remote server"
-        echo "Run: $0 upload $env"
-        exit 1
-    fi
-
-    local tarball=$(get_tarball_path)
-    local tarball_name=$(basename "$tarball")
-
     echo "Starting application on $instance_ip..."
     echo ""
 
     ssh -i "$key_file" \
         -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null \
-        "ec2-user@${instance_ip}" bash <<EOF
+        "ec2-user@${instance_ip}" bash <<'EOF'
 set -e
 
-cd ${DEPLOY_DIR}
+cd /opt/hello_erlang
+
+# Find the built tarball
+TARBALL=$(find _build/prod/rel -name "*.tar.gz" 2>/dev/null | head -1)
+if [ -z "$TARBALL" ]; then
+    echo "Error: No release tarball found. Run build first."
+    exit 1
+fi
+
+TARBALL_NAME=$(basename "$TARBALL")
 
 echo "Stopping existing release (if running)..."
-if [ -f ./bin/${RELEASE_NAME} ]; then
-    ./bin/${RELEASE_NAME} stop || true
+if [ -f ./bin/hello_erlang ]; then
+    ./bin/hello_erlang stop || true
     sleep 2
 fi
 
@@ -290,28 +336,25 @@ echo "Backing up current release..."
 if [ -d "./bin" ]; then
     rm -rf ./backup
     mkdir -p ./backup
-    mv bin lib releases ./backup/ 2>/dev/null || true
+    mv bin lib releases erts-* ./backup/ 2>/dev/null || true
 fi
 
-echo "Extracting release..."
-tar -xzf ${tarball_name}
+echo "Extracting release from $TARBALL..."
+tar -xzf "$TARBALL"
 
 echo "Starting release..."
-./bin/${RELEASE_NAME} daemon
+./bin/hello_erlang daemon
 
 sleep 2
 
 echo "Checking release status..."
-if ./bin/${RELEASE_NAME} pid > /dev/null 2>&1; then
-    PID=\$(./bin/${RELEASE_NAME} pid)
-    echo "✓ Release started successfully (PID: \$PID)"
+if ./bin/hello_erlang pid > /dev/null 2>&1; then
+    PID=$(./bin/hello_erlang pid)
+    echo "✓ Release started successfully (PID: $PID)"
 else
     echo "✗ Failed to start release"
     exit 1
 fi
-
-echo "Cleaning up tarball..."
-rm -f ${tarball_name}
 EOF
 
     echo ""
@@ -516,16 +559,21 @@ cmd_deploy() {
     echo "═══════════════════════════════════════════════"
     echo ""
 
-    echo "[1/3] Building tarball..."
-    cmd_build "$env"
-    echo ""
-
-    echo "[2/3] Uploading to EC2..."
+    echo "[1/4] Uploading source code..."
     cmd_upload "$env" ${key_file:+--key-file "$key_file"}
     echo ""
 
-    echo "[3/3] Starting application..."
+    echo "[2/4] Building release on server..."
+    cmd_build "$env" ${key_file:+--key-file "$key_file"}
+    echo ""
+
+    echo "[3/4] Starting application..."
     cmd_start "$env" ${key_file:+--key-file "$key_file"}
+    echo ""
+
+    echo "[4/4] Verifying deployment..."
+    sleep 2
+    cmd_ping "$env" "deployment-test"
     echo ""
 
     echo "═══════════════════════════════════════════════"

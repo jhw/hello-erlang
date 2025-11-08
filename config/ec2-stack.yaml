@@ -174,7 +174,27 @@ Resources:
           yum update -y
 
           # Install dependencies
-          yum install -y wget tar gzip
+          yum install -y wget tar gzip git ncurses-devel openssl-devel
+
+          # Install Erlang/OTP 27 (latest stable)
+          cd /tmp
+          wget https://github.com/erlang/otp/releases/download/OTP-27.1.2/otp_src_27.1.2.tar.gz
+          tar -xzf otp_src_27.1.2.tar.gz
+          cd otp_src_27.1.2
+          ./configure --prefix=/usr/local/erlang
+          make -j$(nproc)
+          make install
+
+          # Add Erlang to PATH
+          echo 'export PATH=/usr/local/erlang/bin:$PATH' >> /etc/profile.d/erlang.sh
+          chmod +x /etc/profile.d/erlang.sh
+          export PATH=/usr/local/erlang/bin:$PATH
+
+          # Install rebar3
+          cd /tmp
+          wget https://s3.amazonaws.com/rebar3/rebar3
+          chmod +x rebar3
+          mv rebar3 /usr/local/bin/
 
           # Create deployment directory
           mkdir -p /opt/hello_erlang
@@ -182,6 +202,7 @@ Resources:
 
           # Signal successful initialization
           echo "Hello Erlang EC2 instance initialized successfully" > /var/log/hello-erlang-init.log
+          echo "Erlang version: $(/usr/local/erlang/bin/erl -version 2>&1)" >> /var/log/hello-erlang-init.log
       Tags:
         - Key: Name
           Value: !Sub '${Environment}-hello-erlang'
