@@ -575,22 +575,6 @@ case "$COMMAND" in
     ping)
         cmd_ping "$ENV" "$@"
         ;;
-    # Deprecated commands - removed in favor of CodeDeploy automation
-    deploy|start|stop|restart|status|init-status)
-        echo "Error: The '$COMMAND' command has been removed."
-        echo ""
-        echo "This project now uses AWS CodeDeploy for automated deployments."
-        echo "Deployments happen automatically when you run: $0 build $ENV"
-        echo ""
-        echo "Available commands:"
-        echo "  build                  - Build and automatically deploy"
-        echo "  rollback <build-id>    - Deploy a specific previous build"
-        echo "  deployment-status      - Check deployment progress"
-        echo "  ping                   - Test application endpoint"
-        echo ""
-        echo "For help: $0 --help"
-        exit 1
-        ;;
     *)
         echo "Error: Unknown command '$COMMAND'"
         usage
