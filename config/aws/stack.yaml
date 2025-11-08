@@ -183,7 +183,8 @@ Resources:
           - Name: ERLANG_VERSION
             Value: !Ref ErlangVersion
       Source:
-        Type: NO_SOURCE
+        Type: S3
+        Location: !Sub '${ArtifactBucket}/sources/placeholder.zip'
         BuildSpec: buildspec.yml
       TimeoutInMinutes: 30
       Tags:
