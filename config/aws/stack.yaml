@@ -91,7 +91,6 @@ Resources:
   # S3 Bucket for build artifacts
   ArtifactBucket:
     Type: AWS::S3::Bucket
-    DependsOn: LambdaInvokePermission
     Properties:
       BucketName: !Sub '${Environment}-hello-erlang-artifacts-${AWS::AccountId}'
       VersioningConfiguration:
@@ -107,16 +106,8 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
       NotificationConfiguration:
-        LambdaConfigurations:
-          - Event: s3:ObjectCreated:*
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: releases/
-                  - Name: suffix
-                    Value: .tar.gz
-            Function: !GetAtt CodeDeployTriggerLambda.Arn
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
       Tags:
         - Key: Name
           Value: !Sub '${Environment}-hello-erlang-artifacts'
@@ -511,13 +502,14 @@ Resources:
           def handler(event, context):
               print(f"Received event: {json.dumps(event)}")
 
-              # Parse S3 event
-              bucket = event['Records'][0]['s3']['bucket']['name']
-              key = event['Records'][0]['s3']['object']['key']
+              # Parse EventBridge event (from S3 via EventBridge)
+              # EventBridge event format: detail.bucket.name and detail.object.key
+              bucket = event['detail']['bucket']['name']
+              key = event['detail']['object']['key']
 
               print(f"S3 object: s3://{bucket}/{key}")
 
-              # Only process .tar.gz files in releases/
+              # Only process .tar.gz files in releases/ (EventBridge rule should filter, but double-check)
               if not key.startswith('releases/') or not key.endswith('.tar.gz'):
                   print(f"Ignoring non-release artifact: {key}")
                   return {'statusCode': 200, 'body': 'Ignored non-release artifact'}
@@ -569,14 +561,38 @@ Resources:
         - Key: Application
           Value: hello-erlang
 
-  # Lambda Permission for S3 to invoke
-  LambdaInvokePermission:
+  # EventBridge Rule to trigger Lambda on S3 events
+  S3EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${Environment}-hello-erlang-s3-release-trigger'
+      Description: Trigger CodeDeploy when new release artifact is uploaded to S3
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Ref ArtifactBucket
+          object:
+            key:
+              - prefix: releases/
+              - suffix: .tar.gz
+      Targets:
+        - Arn: !GetAtt CodeDeployTriggerLambda.Arn
+          Id: CodeDeployTriggerTarget
+
+  # Lambda Permission for EventBridge to invoke
+  EventBridgeLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref CodeDeployTriggerLambda
       Action: lambda:InvokeFunction
-      Principal: s3.amazonaws.com
-      SourceArn: !GetAtt ArtifactBucket.Arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt S3EventRule.Arn
 
 Outputs:
   InstanceId:
