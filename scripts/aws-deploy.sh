@@ -15,7 +15,7 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {
-    echo "Usage: $0 {build|clean|upload|start|stop|restart|status|deploy} <environment> [options]"
+    echo "Usage: $0 {build|clean|upload|start|stop|restart|status|ping|deploy} <environment> [options]"
     echo ""
     echo "Commands:"
     echo "  build <env>     - Build release tarball locally"
@@ -25,6 +25,7 @@ usage() {
     echo "  stop <env>      - Stop the application on EC2"
     echo "  restart <env>   - Restart the application on EC2"
     echo "  status <env>    - Check application status on EC2"
+    echo "  ping <env>      - Test application endpoint with HTTP request"
     echo "  deploy <env>    - Full deployment (build + upload + start)"
     echo ""
     echo "Environments: dev, staging, prod"
@@ -36,6 +37,7 @@ usage() {
     echo "  $0 build dev              - Build tarball for deployment"
     echo "  $0 clean dev              - Remove local tarball"
     echo "  $0 upload dev             - Upload tarball to dev environment"
+    echo "  $0 ping dev               - Test application endpoint"
     echo "  $0 restart dev            - Restart app in dev environment"
     echo "  $0 deploy prod            - Full deploy to production"
     exit 1
@@ -420,6 +422,46 @@ EOF
     echo "Application URL: http://${instance_ip}:8080/echo?message=Hello"
 }
 
+cmd_ping() {
+    local env=$1
+
+    local instance_ip=$(get_instance_ip "$env") || exit 1
+    local url="http://${instance_ip}:8080/echo?message=ping"
+
+    echo "Testing application endpoint..."
+    echo "  URL: $url"
+    echo ""
+
+    if ! command -v curl &> /dev/null; then
+        echo "Error: curl not found. Please install curl."
+        exit 1
+    fi
+
+    local response=$(curl -s -w "\n%{http_code}" --connect-timeout 5 --max-time 10 "$url" 2>/dev/null)
+    local http_code=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | head -n-1)
+
+    if [ "$http_code" == "200" ] && [ "$body" == "ping" ]; then
+        echo "✓ Application is responding"
+        echo "  Status: 200 OK"
+        echo "  Response: $body"
+    elif [ "$http_code" == "200" ]; then
+        echo "⚠ Application responded but with unexpected content"
+        echo "  Status: 200 OK"
+        echo "  Response: $body"
+        echo "  Expected: ping"
+    elif [ -n "$http_code" ]; then
+        echo "✗ Application returned error"
+        echo "  Status: $http_code"
+        echo "  Response: $body"
+        exit 1
+    else
+        echo "✗ Application not responding"
+        echo "  Could not connect to $url"
+        exit 1
+    fi
+}
+
 cmd_deploy() {
     local env=$1
     shift
@@ -491,6 +533,9 @@ case "$COMMAND" in
         ;;
     status)
         cmd_status "$ENV" "$@"
+        ;;
+    ping)
+        cmd_ping "$ENV"
         ;;
     deploy)
         cmd_deploy "$ENV" "$@"
