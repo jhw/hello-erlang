@@ -25,7 +25,7 @@ usage() {
     echo "  stop <env>      - Stop the application on EC2"
     echo "  restart <env>   - Restart the application on EC2"
     echo "  status <env>    - Check application status on EC2"
-    echo "  ping <env>      - Test application endpoint with HTTP request"
+    echo "  ping <env> [msg] - Test application endpoint (default message: 'ping')"
     echo "  deploy <env>    - Full deployment (build + upload + start)"
     echo ""
     echo "Environments: dev, staging, prod"
@@ -38,6 +38,7 @@ usage() {
     echo "  $0 clean dev              - Remove local tarball"
     echo "  $0 upload dev             - Upload tarball to dev environment"
     echo "  $0 ping dev               - Test application endpoint"
+    echo "  $0 ping dev Hello         - Test with custom message"
     echo "  $0 restart dev            - Restart app in dev environment"
     echo "  $0 deploy prod            - Full deploy to production"
     exit 1
@@ -424,9 +425,11 @@ EOF
 
 cmd_ping() {
     local env=$1
+    shift
+    local message="${1:-ping}"
 
     local instance_ip=$(get_instance_ip "$env") || exit 1
-    local url="http://${instance_ip}:8080/echo?message=ping"
+    local url="http://${instance_ip}:8080/echo?message=${message}"
 
     echo "Testing application endpoint..."
     echo "  URL: $url"
@@ -441,7 +444,7 @@ cmd_ping() {
     local http_code=$(echo "$response" | tail -n1)
     local body=$(echo "$response" | head -n-1)
 
-    if [ "$http_code" == "200" ] && [ "$body" == "ping" ]; then
+    if [ "$http_code" == "200" ] && [ "$body" == "$message" ]; then
         echo "✓ Application is responding"
         echo "  Status: 200 OK"
         echo "  Response: $body"
@@ -449,7 +452,7 @@ cmd_ping() {
         echo "⚠ Application responded but with unexpected content"
         echo "  Status: 200 OK"
         echo "  Response: $body"
-        echo "  Expected: ping"
+        echo "  Expected: $message"
     elif [ -n "$http_code" ]; then
         echo "✗ Application returned error"
         echo "  Status: $http_code"
@@ -535,7 +538,7 @@ case "$COMMAND" in
         cmd_status "$ENV" "$@"
         ;;
     ping)
-        cmd_ping "$ENV"
+        cmd_ping "$ENV" "$@"
         ;;
     deploy)
         cmd_deploy "$ENV" "$@"
