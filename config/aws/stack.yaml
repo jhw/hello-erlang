@@ -184,68 +184,7 @@ Resources:
             Value: !Ref ErlangVersion
       Source:
         Type: NO_SOURCE
-        BuildSpec: |
-          version: 0.2
-          phases:
-            install:
-              runtime-versions:
-                python: 3.11
-              commands:
-                - echo "Installing Erlang/OTP and rebar3..."
-                - yum groupinstall -y "Development Tools"
-                - yum install -y wget tar gzip ncurses-devel openssl-devel autoconf automake unixODBC-devel
-                - export ERLANG_VERSION=${ERLANG_VERSION:-27.1}
-                - echo "Installing Erlang/OTP ${ERLANG_VERSION}..."
-                - cd /tmp
-                - wget https://github.com/erlang/otp/releases/download/OTP-${ERLANG_VERSION}/otp_src_${ERLANG_VERSION}.tar.gz
-                - tar -xzf otp_src_${ERLANG_VERSION}.tar.gz
-                - cd otp_src_${ERLANG_VERSION}
-                - ./configure --prefix=/usr/local/erlang
-                - make -j$(nproc)
-                - make install
-                - export PATH=/usr/local/erlang/bin:$PATH
-                - cd /tmp
-                - wget https://s3.amazonaws.com/rebar3/rebar3
-                - chmod +x rebar3
-                - mv rebar3 /usr/local/bin/
-            pre_build:
-              commands:
-                - echo "Build started on $(date)"
-                - export PATH=/usr/local/erlang/bin:$PATH
-                - erl -version
-                - echo "Building in $(pwd)"
-                - ls -la
-            build:
-              commands:
-                - echo "Building Erlang release with ERTS (prod mode)..."
-                - export PATH=/usr/local/erlang/bin:$PATH
-                - rebar3 as prod tar
-                - echo "Build completed"
-            post_build:
-              commands:
-                - echo "Build completed on $(date)"
-                - TARBALL=$(find _build/prod/rel -name "*.tar.gz" | head -1)
-                - if [ -z "$TARBALL" ]; then echo "Error - tarball not found" && exit 1; fi
-                - echo "Built tarball - $TARBALL"
-                - TARBALL_NAME=$(basename "$TARBALL")
-                - echo "Tarball name - $TARBALL_NAME"
-                - echo "Preparing deployment bundle..."
-                - mkdir -p bundle
-                - cp "$TARBALL" bundle/
-                - cp config/aws/appspec.yml bundle/
-                - mkdir -p bundle/config/aws/codedeploy
-                - cp config/aws/codedeploy/*.sh bundle/config/aws/codedeploy/
-                - cd bundle && tar -czf ../hello_erlang.tar.gz . && cd ..
-                - echo "Deployment bundle created"
-                - ls -lh hello_erlang.tar.gz
-          artifacts:
-            files:
-              - 'hello_erlang.tar.gz'
-            name: release-$(date +%Y%m%d-%H%M%S)
-            discard-paths: yes
-          cache:
-            paths:
-              - '/root/.cache/rebar3/**/*'
+        BuildSpec: config/aws/buildspec.yml
       TimeoutInMinutes: 30
       Tags:
         - Key: Name
