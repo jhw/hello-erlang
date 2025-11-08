@@ -14,10 +14,10 @@ TEMPLATE_FILE="config/ec2-stack.yaml"
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {create|delete|update|status|outputs|events|resources|list} <environment> [options]"
+    echo "Usage: $0 {deploy|delete|update|status|outputs|events|resources|list} <environment> [options]"
     echo ""
     echo "Commands:"
-    echo "  create <env>              - Create a new stack"
+    echo "  deploy <env>              - Deploy/create a new stack"
     echo "  delete <env>              - Delete a stack"
     echo "  update <env>              - Update an existing stack"
     echo "  status <env>              - Show stack status"
@@ -28,7 +28,7 @@ usage() {
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
-    echo "Options for create:"
+    echo "Options for deploy:"
     echo "  --key-name <name>         - EC2 key pair name (optional, auto-discovers first available)"
     echo "  --instance-type <type>    - EC2 instance type (default: t3.small)"
     echo "  --ssh-location <cidr>     - SSH access CIDR (default: 0.0.0.0/0)"
@@ -369,7 +369,7 @@ list_stacks() {
 
 # Main command router
 case "$1" in
-    create)
+    deploy)
         if [ -z "$2" ]; then
             echo "Error: Environment required"
             usage
