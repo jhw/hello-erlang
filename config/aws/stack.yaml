@@ -293,6 +293,46 @@ Resources:
           rpm -U ./amazon-cloudwatch-agent.rpm
           echo "CloudWatch Agent installed"
 
+          # Configure CloudWatch Agent for CodeDeploy logs
+          cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOF'
+          {
+            "logs": {
+              "logs_collected": {
+                "files": {
+                  "collect_list": [
+                    {
+                      "file_path": "/var/log/aws/codedeploy-agent/codedeploy-agent.log",
+                      "log_group_name": "/aws/codedeploy/${Environment}/agent",
+                      "log_stream_name": "{instance_id}/codedeploy-agent.log",
+                      "retention_in_days": 7
+                    },
+                    {
+                      "file_path": "/opt/codedeploy-agent/deployment-root/deployment-logs/codedeploy-agent-deployments.log",
+                      "log_group_name": "/aws/codedeploy/${Environment}/deployments",
+                      "log_stream_name": "{instance_id}/deployments.log",
+                      "retention_in_days": 7
+                    },
+                    {
+                      "file_path": "/tmp/codedeploy-agent.update.log",
+                      "log_group_name": "/aws/codedeploy/${Environment}/updates",
+                      "log_stream_name": "{instance_id}/updates.log",
+                      "retention_in_days": 3
+                    }
+                  ]
+                }
+              }
+            }
+          }
+          EOF
+
+          # Start CloudWatch Agent
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+            -a fetch-config \
+            -m ec2 \
+            -s \
+            -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+          echo "CloudWatch Agent configured and started"
+
           # Install CodeDeploy Agent
           echo "Installing CodeDeploy Agent..."
           cd /tmp
