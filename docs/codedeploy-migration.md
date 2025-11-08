@@ -77,7 +77,7 @@ hooks:
   ValidateService: ...
 ```
 
-### 2. CodeDeploy Lifecycle Scripts (`scripts/codedeploy/`)
+### 2. CodeDeploy Lifecycle Scripts (`config/codedeploy/`)
 
 Five bash scripts that handle each phase of deployment:
 
@@ -108,7 +108,7 @@ CloudFormation creates:
 CodeBuild now creates a deployment bundle containing:
 - Erlang release tarball (`hello_erlang.tar.gz`)
 - `appspec.yml`
-- CodeDeploy lifecycle scripts (`scripts/codedeploy/`)
+- CodeDeploy lifecycle scripts (`config/codedeploy/`)
 
 This bundle is packaged as `hello_erlang.tar.gz` and uploaded to S3.
 

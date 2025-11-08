@@ -55,8 +55,8 @@ phases:
       - mkdir -p bundle
       - cp "$TARBALL" bundle/
       - cp config/appspec.yml bundle/
-      - mkdir -p bundle/scripts/codedeploy
-      - cp scripts/codedeploy/*.sh bundle/scripts/codedeploy/
+      - mkdir -p bundle/config/codedeploy
+      - cp config/codedeploy/*.sh bundle/config/codedeploy/
       - cd bundle && tar -czf ../hello_erlang.tar.gz . && cd ..
       - echo "Deployment bundle created"
       - ls -lh hello_erlang.tar.gz
