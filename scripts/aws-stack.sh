@@ -64,8 +64,8 @@ auto_discover_key_pair() {
     echo "$key_name"
 }
 
-auto_discover_subnets() {
-    echo "Auto-discovering subnets..." >&2
+auto_discover_vpc_and_subnets() {
+    echo "Auto-discovering VPC and subnets..." >&2
 
     # Get default VPC ID
     local vpc_id=$(aws ec2 describe-vpcs \
@@ -76,7 +76,7 @@ auto_discover_subnets() {
     if [ "$vpc_id" == "None" ] || [ -z "$vpc_id" ]; then
         echo "" >&2
         echo "Error: No default VPC found" >&2
-        echo "Please specify subnets manually with --subnets or create a default VPC" >&2
+        echo "Please specify VPC and subnets manually or create a default VPC" >&2
         return 1
     fi
 
@@ -105,7 +105,8 @@ auto_discover_subnets() {
     fi
 
     echo "  Found $subnet_count subnets, using first 2" >&2
-    echo "$subnet_list"
+    # Return both VPC ID and subnet list separated by |
+    echo "${vpc_id}|${subnet_list}"
 }
 
 create_stack() {
@@ -118,6 +119,7 @@ create_stack() {
     local instance_type="${DEFAULT_INSTANCE_TYPE:-t3.small}"
     local ssh_location="${DEFAULT_SSH_LOCATION:-0.0.0.0/0}"
     local subnets="${DEFAULT_ALB_SUBNETS:-}"
+    local vpc_id="${DEFAULT_VPC_ID:-}"
     local no_key=false
 
     # Parse command-line options (these override defaults)
@@ -158,13 +160,17 @@ create_stack() {
         fi
     fi
 
-    # Auto-discover subnets if not provided
-    if [ -z "$subnets" ]; then
-        if ! subnets=$(auto_discover_subnets); then
+    # Auto-discover VPC and subnets if not provided
+    if [ -z "$subnets" ] || [ -z "$vpc_id" ]; then
+        local vpc_subnet_result
+        if ! vpc_subnet_result=$(auto_discover_vpc_and_subnets); then
             echo ""
-            echo "Failed to auto-discover subnets. Please specify manually with --subnets"
+            echo "Failed to auto-discover VPC/subnets. Please specify manually"
             exit 1
         fi
+        # Parse the result (format: vpc_id|subnet_list)
+        vpc_id=$(echo "$vpc_subnet_result" | cut -d'|' -f1)
+        subnets=$(echo "$vpc_subnet_result" | cut -d'|' -f2)
     fi
 
     echo "Creating stack: $stack_name"
@@ -176,6 +182,7 @@ create_stack() {
     fi
     echo "  Instance Type: $instance_type"
     echo "  SSH Location: $ssh_location"
+    echo "  VPC ID: $vpc_id"
     echo "  ALB Subnets: $subnets"
     echo ""
 
@@ -184,6 +191,7 @@ create_stack() {
         "ParameterKey=Environment,ParameterValue=$env"
         "ParameterKey=InstanceType,ParameterValue=$instance_type"
         "ParameterKey=SSHLocation,ParameterValue=$ssh_location"
+        "ParameterKey=VpcId,ParameterValue=$vpc_id"
         "ParameterKey=ALBSubnets,ParameterValue=\"$subnets\""
     )
 
@@ -269,6 +277,7 @@ update_stack() {
             "ParameterKey=KeyName,UsePreviousValue=true" \
             "ParameterKey=InstanceType,UsePreviousValue=true" \
             "ParameterKey=SSHLocation,UsePreviousValue=true" \
+            "ParameterKey=VpcId,UsePreviousValue=true" \
             "ParameterKey=ALBSubnets,UsePreviousValue=true" \
         --capabilities CAPABILITY_NAMED_IAM
 

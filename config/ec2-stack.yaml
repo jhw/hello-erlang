@@ -34,6 +34,10 @@ Parameters:
     Type: CommaDelimitedList
     Description: At least 2 subnet IDs in different AZs for the Application Load Balancer
 
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID for security groups (should match subnet VPC)
+
 Conditions:
   HasKeyName: !Not [!Equals [!Ref KeyName, '']]
 
@@ -56,6 +60,7 @@ Resources:
     Properties:
       GroupName: !Sub '${Environment}-hello-erlang-alb-sg'
       GroupDescription: Security group for Application Load Balancer
+      VpcId: !Ref VpcId
       SecurityGroupIngress:
         # HTTP from internet
         - IpProtocol: tcp
@@ -83,6 +88,7 @@ Resources:
     Properties:
       GroupName: !Sub '${Environment}-hello-erlang-sg'
       GroupDescription: Security group for Hello Erlang application
+      VpcId: !Ref VpcId
       SecurityGroupIngress:
         # SSH access
         - IpProtocol: tcp
