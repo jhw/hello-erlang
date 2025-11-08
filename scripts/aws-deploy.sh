@@ -88,7 +88,7 @@ cmd_build() {
     cp config/aws/buildspec.yml buildspec.yml
 
     zip -q -r "$source_bundle" \
-        apps buildspec.yml config/aws rebar.config rebar.lock \
+        apps buildspec.yml config rebar.config rebar.lock \
         -x "*.git*" "*_build*" "*.rebar3*" "*.beam" "config/aws/stack.yaml" "config/env.sh"
 
     # Clean up temporary buildspec copy

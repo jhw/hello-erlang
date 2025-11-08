@@ -8,24 +8,27 @@ phases:
     runtime-versions:
       python: 3.11
     commands:
-      - echo "Installing Erlang/OTP and rebar3..."
-      - yum groupinstall -y "Development Tools"
-      - yum install -y wget tar gzip ncurses-devel openssl-devel autoconf automake unixODBC-devel
+      - echo "Installing Erlang/OTP and rebar3 using kerl..."
+      - yum install -y wget tar gzip git ncurses-devel openssl-devel
+
+      # Install kerl (curl is already available in CodeBuild)
+      - curl -O https://raw.githubusercontent.com/kerl/kerl/master/kerl
+      - chmod +x kerl
+      - mv kerl /usr/local/bin/
+
+      # Configure kerl (minimal options for reliable build)
+      - export KERL_CONFIGURE_OPTIONS="--disable-debug --without-javac --without-wx --without-odbc"
+      - export KERL_BUILD_DOCS=no
 
       # Install Erlang/OTP (version from environment variable or default to 27.1)
       - export ERLANG_VERSION=${ERLANG_VERSION:-27.1}
-      - echo "Installing Erlang/OTP ${ERLANG_VERSION}..."
-      - cd /tmp
-      - wget https://github.com/erlang/otp/releases/download/OTP-${ERLANG_VERSION}/otp_src_${ERLANG_VERSION}.tar.gz
-      - tar -xzf otp_src_${ERLANG_VERSION}.tar.gz
-      - cd otp_src_${ERLANG_VERSION}
-      - ./configure --prefix=/usr/local/erlang
-      - make -j$(nproc)
-      - make install
+      - echo "Installing Erlang/OTP ${ERLANG_VERSION} using kerl..."
+      - kerl build ${ERLANG_VERSION} ${ERLANG_VERSION}
+      - kerl install ${ERLANG_VERSION} /usr/local/erlang
+      - source /usr/local/erlang/activate
       - export PATH=/usr/local/erlang/bin:$PATH
 
       # Install rebar3
-      - cd /tmp
       - wget https://s3.amazonaws.com/rebar3/rebar3
       - chmod +x rebar3
       - mv rebar3 /usr/local/bin/
@@ -55,13 +58,18 @@ phases:
       - echo "Tarball name - $TARBALL_NAME"
       - echo "Preparing deployment bundle..."
       - mkdir -p bundle
-      - cp "$TARBALL" bundle/
+      - echo "Extracting Erlang release..."
+      - tar -xzf "$TARBALL" -C bundle/
+      - echo "Adding CodeDeploy files..."
       - cp config/aws/appspec.yml bundle/appspec.yml
       - mkdir -p bundle/scripts
       - cp config/aws/codedeploy/*.sh bundle/scripts/
+      - echo "Creating final deployment bundle..."
       - cd bundle && tar -czf ../hello_erlang.tar.gz . && cd ..
       - echo "Deployment bundle created"
       - ls -lh hello_erlang.tar.gz
+      - echo "Deployment bundle contents:"
+      - tar -tzf hello_erlang.tar.gz | head -20
 
 artifacts:
   files:

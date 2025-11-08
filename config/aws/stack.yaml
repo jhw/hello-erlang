@@ -27,10 +27,10 @@ Parameters:
     Type: AWS::EC2::VPC::Id
     Description: VPC ID for security groups (should match subnet VPC)
 
-  LatestAL2AmiId:
+  LatestAL2023AmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
-    Description: Latest Amazon Linux 2 AMI ID from SSM Parameter Store
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Latest Amazon Linux 2023 AMI ID from SSM Parameter Store
 
   ErlangVersion:
     Type: String
@@ -264,7 +264,7 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: !Ref InstanceType
-      ImageId: !Ref LatestAL2AmiId
+      ImageId: !Ref LatestAL2023AmiId
       IamInstanceProfile: !Ref EC2InstanceProfile
       SubnetId: !Select [0, !Ref ALBSubnets]
       SecurityGroupIds:

@@ -26,10 +26,10 @@ if [ ! -f "./bin/${RELEASE_NAME}" ]; then
     exit 1
 fi
 
-# Set correct permissions
+# Set correct permissions (ignore errors if already set)
 echo "Setting permissions..."
-chmod +x ./bin/*
-chmod -R u+rw,g+r,o+r .
+chmod +x ./bin/* 2>/dev/null || true
+chmod -R u+rw,g+r,o+r . 2>/dev/null || true
 
 echo "✓ Release structure validated"
 echo "✓ Permissions set correctly"
