@@ -28,25 +28,84 @@ usage() {
     echo "Environments: dev, staging, prod"
     echo ""
     echo "Options for create:"
-    echo "  --key-name <name>         - EC2 key pair name (required*)"
+    echo "  --key-name <name>         - EC2 key pair name (optional, auto-discovers first available)"
     echo "  --instance-type <type>    - EC2 instance type (default: t3.small)"
     echo "  --ssh-location <cidr>     - SSH access CIDR (default: 0.0.0.0/0)"
-    echo "  --subnets <subnet-ids>    - Comma-separated subnet IDs for ALB (required*)"
-    echo "                              Must be at least 2 subnets in different AZs"
+    echo "  --subnets <subnet-ids>    - Comma-separated subnet IDs for ALB (optional, auto-discovers)"
+    echo "  --no-key                  - Skip SSH key pair (no SSH access)"
     echo ""
-    echo "* Required unless set as DEFAULT_* variables in config/aws.sh"
-    echo ""
-    echo "To set defaults, edit config/aws.sh and customize."
-    echo ""
-    echo "To get default VPC subnet IDs, run:"
-    echo "  aws ec2 describe-subnets --filters \"Name=default-for-az,Values=true\" \\"
-    echo "    --query 'Subnets[*].[SubnetId,AvailabilityZone]' --output table"
+    echo "Auto-discovery:"
+    echo "  - Key pair: Uses first available key pair in your account"
+    echo "  - Subnets: Uses default VPC subnets (at least 2 in different AZs)"
+    echo "  - Set DEFAULT_* variables in config/aws.sh to override"
     exit 1
 }
 
 get_stack_name() {
     local env=$1
     echo "${STACK_PREFIX}-${env}"
+}
+
+auto_discover_key_pair() {
+    echo "Auto-discovering key pair..." >&2
+    local key_name=$(aws ec2 describe-key-pairs \
+        --query 'KeyPairs[0].KeyName' \
+        --output text 2>/dev/null)
+
+    if [ "$key_name" == "None" ] || [ -z "$key_name" ]; then
+        echo "" >&2
+        echo "Warning: No key pairs found in your AWS account" >&2
+        echo "Stack will be created without SSH access (SSM Session Manager only)" >&2
+        echo ""
+        return 1
+    fi
+
+    echo "  Found key pair: $key_name" >&2
+    echo "$key_name"
+}
+
+auto_discover_subnets() {
+    echo "Auto-discovering subnets..." >&2
+
+    # Get default VPC ID
+    local vpc_id=$(aws ec2 describe-vpcs \
+        --filters "Name=is-default,Values=true" \
+        --query 'Vpcs[0].VpcId' \
+        --output text 2>/dev/null)
+
+    if [ "$vpc_id" == "None" ] || [ -z "$vpc_id" ]; then
+        echo "" >&2
+        echo "Error: No default VPC found" >&2
+        echo "Please specify subnets manually with --subnets or create a default VPC" >&2
+        return 1
+    fi
+
+    echo "  Found default VPC: $vpc_id" >&2
+
+    # Get subnets in default VPC, sorted by AZ
+    local subnets=$(aws ec2 describe-subnets \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query 'Subnets | sort_by(@, &AvailabilityZone)[*].SubnetId' \
+        --output text 2>/dev/null)
+
+    if [ -z "$subnets" ]; then
+        echo "" >&2
+        echo "Error: No subnets found in default VPC" >&2
+        return 1
+    fi
+
+    # Convert to comma-separated (take first 2 for different AZs)
+    local subnet_list=$(echo "$subnets" | tr '\t' ',' | cut -d',' -f1,2)
+    local subnet_count=$(echo "$subnets" | wc -w | tr -d ' ')
+
+    if [ "$subnet_count" -lt 2 ]; then
+        echo "" >&2
+        echo "Error: At least 2 subnets required, found only $subnet_count" >&2
+        return 1
+    fi
+
+    echo "  Found $subnet_count subnets, using first 2" >&2
+    echo "$subnet_list"
 }
 
 create_stack() {
@@ -59,6 +118,7 @@ create_stack() {
     local instance_type="${DEFAULT_INSTANCE_TYPE:-t3.small}"
     local ssh_location="${DEFAULT_SSH_LOCATION:-0.0.0.0/0}"
     local subnets="${DEFAULT_ALB_SUBNETS:-}"
+    local no_key=false
 
     # Parse command-line options (these override defaults)
     while [[ $# -gt 0 ]]; do
@@ -79,6 +139,11 @@ create_stack() {
                 subnets="$2"
                 shift 2
                 ;;
+            --no-key)
+                no_key=true
+                key_name=""
+                shift
+                ;;
             *)
                 echo "Unknown option: $1"
                 usage
@@ -86,44 +151,53 @@ create_stack() {
         esac
     done
 
-    if [ -z "$key_name" ]; then
-        echo "Error: --key-name is required (or set DEFAULT_KEY_NAME in config/aws.sh)"
-        echo ""
-        echo "Available key pairs:"
-        aws ec2 describe-key-pairs --query 'KeyPairs[*].KeyName' --output table
-        exit 1
+    # Auto-discover key pair if not provided and not explicitly disabled
+    if [ -z "$key_name" ] && [ "$no_key" = false ]; then
+        if ! key_name=$(auto_discover_key_pair); then
+            key_name=""
+        fi
     fi
 
+    # Auto-discover subnets if not provided
     if [ -z "$subnets" ]; then
-        echo "Error: --subnets is required (or set DEFAULT_ALB_SUBNETS in config/aws.sh)"
-        echo ""
-        echo "To get default VPC subnet IDs, run:"
-        echo "  aws ec2 describe-subnets --filters \"Name=default-for-az,Values=true\" \\"
-        echo "    --query 'Subnets[*].[SubnetId,AvailabilityZone]' --output table"
-        echo ""
-        echo "Then either:"
-        echo "  1. Use command line: --subnets subnet-xxxxx,subnet-yyyyy"
-        echo "  2. Set in config/aws.sh: export DEFAULT_ALB_SUBNETS=subnet-xxxxx,subnet-yyyyy"
-        exit 1
+        if ! subnets=$(auto_discover_subnets); then
+            echo ""
+            echo "Failed to auto-discover subnets. Please specify manually with --subnets"
+            exit 1
+        fi
     fi
 
     echo "Creating stack: $stack_name"
     echo "  Environment: $env"
-    echo "  Key Name: $key_name"
+    if [ -z "$key_name" ]; then
+        echo "  Key Name: (none - SSM Session Manager only)"
+    else
+        echo "  Key Name: $key_name"
+    fi
     echo "  Instance Type: $instance_type"
     echo "  SSH Location: $ssh_location"
     echo "  ALB Subnets: $subnets"
     echo ""
 
+    # Build parameters array
+    local params=(
+        "ParameterKey=Environment,ParameterValue=$env"
+        "ParameterKey=InstanceType,ParameterValue=$instance_type"
+        "ParameterKey=SSHLocation,ParameterValue=$ssh_location"
+        "ParameterKey=ALBSubnets,ParameterValue=\"$subnets\""
+    )
+
+    # Add KeyName parameter only if provided
+    if [ -n "$key_name" ]; then
+        params+=("ParameterKey=KeyName,ParameterValue=$key_name")
+    else
+        params+=("ParameterKey=KeyName,ParameterValue=")
+    fi
+
     aws cloudformation create-stack \
         --stack-name "$stack_name" \
         --template-body "file://$TEMPLATE_FILE" \
-        --parameters \
-            "ParameterKey=Environment,ParameterValue=$env" \
-            "ParameterKey=KeyName,ParameterValue=$key_name" \
-            "ParameterKey=InstanceType,ParameterValue=$instance_type" \
-            "ParameterKey=SSHLocation,ParameterValue=$ssh_location" \
-            "ParameterKey=ALBSubnets,ParameterValue=\"$subnets\"" \
+        --parameters "${params[@]}" \
         --capabilities CAPABILITY_NAMED_IAM \
         --tags \
             "Key=Environment,Value=$env" \

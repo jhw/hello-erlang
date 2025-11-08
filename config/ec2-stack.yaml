@@ -20,8 +20,9 @@ Parameters:
     Description: EC2 instance type
 
   KeyName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: EC2 Key Pair for SSH access
+    Type: String
+    Default: ''
+    Description: EC2 Key Pair for SSH access (optional - leave empty for no SSH access)
 
   SSHLocation:
     Type: String
@@ -30,8 +31,11 @@ Parameters:
     ConstraintDescription: Must be a valid IP CIDR range (x.x.x.x/x)
 
   ALBSubnets:
-    Type: List<AWS::EC2::Subnet::Id>
-    Description: At least 2 subnets in different AZs for the Application Load Balancer
+    Type: CommaDelimitedList
+    Description: At least 2 subnet IDs in different AZs for the Application Load Balancer
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, '']]
 
 Mappings:
   # Amazon Linux 2023 AMI IDs per region
@@ -150,7 +154,7 @@ Resources:
     Properties:
       InstanceType: !Ref InstanceType
       ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
-      KeyName: !Ref KeyName
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
       IamInstanceProfile: !Ref EC2InstanceProfile
       SecurityGroups:
         - !Ref EC2SecurityGroup
