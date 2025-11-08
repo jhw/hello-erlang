@@ -18,7 +18,7 @@ usage() {
     echo "Usage: $0 {upload|build|start|stop|restart|status|ping|logs|init-status} <environment> [options]"
     echo ""
     echo "Commands:"
-    echo "  init-status <env> - Check if UserData initialization is complete"
+    echo "  init-status <env> [--follow] - Check if UserData initialization is complete"
     echo "  upload <env>    - Upload source code to EC2 instance"
     echo "  build <env>     - Build release on EC2 server"
     echo "  start <env>     - Start the application on EC2"
@@ -562,6 +562,7 @@ cmd_init_status() {
     local env=$1
     shift
     local key_file=""
+    local follow=false
 
     # Parse options
     while [[ $# -gt 0 ]]; do
@@ -569,6 +570,10 @@ cmd_init_status() {
             --key-file)
                 key_file="$2"
                 shift 2
+                ;;
+            --follow|-f)
+                follow=true
+                shift
                 ;;
             *)
                 echo "Unknown option: $1"
@@ -640,14 +645,34 @@ cmd_init_status() {
         else
             echo "⏳ Initialization still in progress"
             echo ""
-            echo "Run './scripts/aws-deploy.sh logs $env' to monitor progress"
+            if [ "$follow" = true ]; then
+                echo "Following cloud-init logs (Press Ctrl+C to exit)..."
+                echo ""
+                ssh -i "$key_file" \
+                    -o StrictHostKeyChecking=no \
+                    -o UserKnownHostsFile=/dev/null \
+                    "ec2-user@${instance_ip}" \
+                    "sudo tail -f /var/log/cloud-init-output.log"
+            else
+                echo "Run './scripts/aws-deploy.sh init-status $env --follow' to monitor progress"
+            fi
         fi
     else
         echo "✗ Deployment directory not found"
         echo "⏳ UserData script still running (compiling Erlang/OTP)"
         echo ""
-        echo "This can take 5-10 minutes. Check cloud-init logs:"
-        echo "  ssh -i $key_file ec2-user@${instance_ip} 'sudo tail -f /var/log/cloud-init-output.log'"
+        if [ "$follow" = true ]; then
+            echo "Following cloud-init logs (Press Ctrl+C to exit)..."
+            echo ""
+            ssh -i "$key_file" \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                "ec2-user@${instance_ip}" \
+                "sudo tail -f /var/log/cloud-init-output.log"
+        else
+            echo "This can take 5-10 minutes. Run with --follow to monitor:"
+            echo "  ./scripts/aws-deploy.sh init-status $env --follow"
+        fi
     fi
 }
 
