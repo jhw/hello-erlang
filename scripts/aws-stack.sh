@@ -14,7 +14,7 @@ TEMPLATE_FILE="config/ec2-stack.yaml"
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {create|delete|update|status|outputs|events|list} <environment> [options]"
+    echo "Usage: $0 {create|delete|update|status|outputs|events|resources|list} <environment> [options]"
     echo ""
     echo "Commands:"
     echo "  create <env>              - Create a new stack"
@@ -23,6 +23,7 @@ usage() {
     echo "  status <env>              - Show stack status"
     echo "  outputs <env>             - Show stack outputs"
     echo "  events <env>              - Show recent stack events"
+    echo "  resources <env>           - Show stack resources"
     echo "  list                      - List all hello-erlang stacks"
     echo ""
     echo "Environments: dev, staging, prod"
@@ -329,6 +330,19 @@ show_events() {
         --output table
 }
 
+show_resources() {
+    local env=$1
+    local stack_name=$(get_stack_name $env)
+
+    echo "Resources for: $stack_name"
+    echo ""
+
+    aws cloudformation describe-stack-resources \
+        --stack-name "$stack_name" \
+        --query 'StackResources[*].[LogicalResourceId,ResourceType,ResourceStatus,PhysicalResourceId]' \
+        --output table
+}
+
 list_stacks() {
     echo "Hello Erlang CloudFormation Stacks:"
     echo ""
@@ -382,6 +396,13 @@ case "$1" in
             usage
         fi
         show_events "$2"
+        ;;
+    resources)
+        if [ -z "$2" ]; then
+            echo "Error: Environment required"
+            usage
+        fi
+        show_resources "$2"
         ;;
     list)
         list_stacks
