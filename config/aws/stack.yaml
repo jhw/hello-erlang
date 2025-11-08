@@ -173,7 +173,7 @@ Resources:
         Packaging: NONE
       Environment:
         Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_LARGE
+        ComputeType: BUILD_GENERAL1_MEDIUM
         Image: aws/codebuild/amazonlinux2023-x86_64-standard:1.0
         EnvironmentVariables:
           - Name: ENVIRONMENT
