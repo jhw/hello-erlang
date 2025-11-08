@@ -405,7 +405,7 @@ Resources:
               Service: codedeploy.amazonaws.com
             Action: 'sts:AssumeRole'
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AWSCodeDeployRole
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
       Tags:
         - Key: Environment
           Value: !Ref Environment
