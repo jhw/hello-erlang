@@ -15,12 +15,11 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {
-    echo "Usage: $0 {upload|build|start|stop|restart|status|ping|logs|init-status} <environment> [options]"
+    echo "Usage: $0 {upload|start|stop|restart|status|ping|logs|init-status} <environment> [options]"
     echo ""
     echo "Commands:"
     echo "  init-status <env> [--follow] - Check if UserData initialization is complete"
-    echo "  upload <env>    - Upload source code to EC2 instance"
-    echo "  build <env>     - Build release on EC2 server"
+    echo "  upload <env>    - Build release in CodeBuild and deploy to EC2 instance"
     echo "  start <env>     - Start the application on EC2"
     echo "  stop <env>      - Stop the application on EC2"
     echo "  restart <env>   - Restart the application on EC2"
@@ -35,13 +34,12 @@ usage() {
     echo ""
     echo "Deployment workflow:"
     echo "  0. $0 init-status dev  # Wait for UserData to complete"
-    echo "  1. $0 upload dev       # Upload source code"
-    echo "  2. $0 build dev        # Build release on server"
-    echo "  3. $0 start dev        # Start application"
-    echo "  4. $0 ping dev         # Verify it's responding"
+    echo "  1. $0 upload dev       # Build in CodeBuild and deploy to EC2"
+    echo "  2. $0 start dev        # Start application"
+    echo "  3. $0 ping dev         # Verify it's responding"
     echo ""
     echo "Other examples:"
-    echo "  $0 logs dev        - Monitor UserData initialization (Erlang install)"
+    echo "  $0 logs dev        - Monitor UserData initialization"
     echo "  $0 status dev      - Check if app is running"
     echo "  $0 restart dev     - Restart running app"
     echo "  $0 stop dev        - Stop app"
@@ -140,58 +138,6 @@ check_app_extracted() {
 }
 
 # Command implementations
-cmd_build() {
-    local env=$1
-    shift
-    local key_file=""
-
-    # Parse options
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --key-file)
-                key_file="$2"
-                shift 2
-                ;;
-            *)
-                echo "Unknown option: $1"
-                usage
-                ;;
-        esac
-    done
-
-    local instance_ip=$(get_instance_ip "$env") || exit 1
-    key_file=$(get_key_file "$env" "$key_file") || exit 1
-
-    echo "Building release on EC2 instance $instance_ip..."
-    echo ""
-
-    # Build on remote server
-    ssh -i "$key_file" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        "ec2-user@${instance_ip}" bash <<'EOF'
-set -e
-
-cd /opt/hello_erlang
-
-echo "Building release tarball with ERTS (prod mode)..."
-export PATH=/usr/local/erlang/bin:$PATH
-rebar3 as prod tar
-
-# Find and show the tarball
-TARBALL=$(find _build/prod/rel -name "*.tar.gz" 2>/dev/null | head -1)
-if [ -z "$TARBALL" ]; then
-    echo "Error: Tarball not found after build"
-    exit 1
-fi
-
-echo "✓ Release built: $TARBALL"
-EOF
-
-    echo ""
-    echo "✓ Build complete on server"
-}
-
 cmd_upload() {
     local env=$1
     shift
@@ -232,46 +178,148 @@ cmd_upload() {
         fi
     fi
 
-    echo "Uploading source code to $instance_ip..."
-    echo "  Target: ${DEPLOY_DIR}/"
-    echo "  Key: $key_file"
+    # Get stack outputs
+    local codebuild_project=$(get_stack_output "$env" "CodeBuildProjectName")
+    local artifact_bucket=$(get_stack_output "$env" "ArtifactBucketName")
+
+    if [ -z "$codebuild_project" ]; then
+        echo "Error: Could not get CodeBuild project name from stack outputs"
+        exit 1
+    fi
+
+    if [ -z "$artifact_bucket" ]; then
+        echo "Error: Could not get artifact bucket name from stack outputs"
+        exit 1
+    fi
+
+    echo "=== CodeBuild Deployment ==="
+    echo "Building release in CodeBuild..."
+    echo "  Project: $codebuild_project"
+    echo "  Artifact Bucket: $artifact_bucket"
     echo ""
 
-    # Create a tarball of source code (excluding build artifacts)
-    tar -czf /tmp/hello_erlang_src.tar.gz \
-        --exclude='.git' \
-        --exclude='_build' \
-        --exclude='.rebar3' \
-        --exclude='*.beam' \
-        -C "$(pwd)" \
-        apps config rebar.config rebar.lock
+    # Create source bundle
+    echo "Creating source bundle..."
+    local timestamp=$(date +%Y%m%d-%H%M%S)
+    local source_bundle="/tmp/hello_erlang_source_${timestamp}.zip"
 
-    # Upload source tarball
-    scp -i "$key_file" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        /tmp/hello_erlang_src.tar.gz \
-        "ec2-user@${instance_ip}:/tmp/"
+    zip -q -r "$source_bundle" \
+        apps config rebar.config rebar.lock \
+        -x "*.git*" "*_build*" "*.rebar3*" "*.beam"
 
-    # Extract source on server
-    ssh -i "$key_file" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        "ec2-user@${instance_ip}" bash <<EOF
+    echo "✓ Source bundle created: $(basename $source_bundle)"
+    echo ""
+
+    # Upload source to S3
+    local source_key="sources/source-${timestamp}.zip"
+    echo "Uploading source to S3..."
+    aws s3 cp "$source_bundle" "s3://${artifact_bucket}/${source_key}"
+    echo "✓ Source uploaded to s3://${artifact_bucket}/${source_key}"
+    echo ""
+
+    # Start CodeBuild
+    echo "Starting CodeBuild..."
+    local build_id=$(aws codebuild start-build \
+        --project-name "$codebuild_project" \
+        --source-type-override S3 \
+        --source-location-override "${artifact_bucket}/${source_key}" \
+        --query 'build.id' \
+        --output text)
+
+    if [ -z "$build_id" ]; then
+        echo "Error: Failed to start CodeBuild"
+        rm -f "$source_bundle"
+        exit 1
+    fi
+
+    echo "✓ Build started: $build_id"
+    echo ""
+
+    # Wait for build to complete with progress updates
+    echo "Waiting for build to complete..."
+    local status="IN_PROGRESS"
+    local last_phase=""
+
+    while [ "$status" == "IN_PROGRESS" ]; do
+        sleep 10
+
+        local build_info=$(aws codebuild batch-get-builds --ids "$build_id" --query 'builds[0]')
+        status=$(echo "$build_info" | jq -r '.buildStatus')
+        local current_phase=$(echo "$build_info" | jq -r '.currentPhase // "UNKNOWN"')
+
+        if [ "$current_phase" != "$last_phase" ]; then
+            echo "  Phase: $current_phase"
+            last_phase="$current_phase"
+        fi
+    done
+
+    # Clean up source bundle
+    rm -f "$source_bundle"
+
+    echo ""
+    if [ "$status" == "SUCCEEDED" ]; then
+        echo "✓ CodeBuild completed successfully"
+        echo ""
+
+        # Find the built artifact in S3
+        echo "Finding built release artifact..."
+        local artifact_prefix="releases/${build_id#*:}"
+        local artifact_key=$(aws s3 ls "s3://${artifact_bucket}/${artifact_prefix}/" --recursive | \
+            grep "\.tar\.gz$" | awk '{print $4}' | head -1)
+
+        if [ -z "$artifact_key" ]; then
+            echo "Error: Could not find release artifact in S3"
+            exit 1
+        fi
+
+        local tarball_name=$(basename "$artifact_key")
+        echo "✓ Found artifact: $tarball_name"
+        echo ""
+
+        # Download artifact to EC2
+        echo "Deploying release to EC2 instance $instance_ip..."
+        ssh -i "$key_file" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "ec2-user@${instance_ip}" bash <<EOF
 set -e
+
 cd ${DEPLOY_DIR}
-tar -xzf /tmp/hello_erlang_src.tar.gz
-rm -f /tmp/hello_erlang_src.tar.gz
-echo "✓ Source code extracted"
+
+echo "Downloading release from S3..."
+aws s3 cp "s3://${artifact_bucket}/${artifact_key}" "${tarball_name}"
+
+echo "Stopping existing release (if running)..."
+if [ -f ./bin/${RELEASE_NAME} ]; then
+    ./bin/${RELEASE_NAME} stop || true
+    sleep 2
+fi
+
+echo "Backing up current release..."
+if [ -d "./bin" ]; then
+    rm -rf ./backup
+    mkdir -p ./backup
+    mv bin lib releases erts-* ./backup/ 2>/dev/null || true
+fi
+
+echo "Extracting release..."
+tar -xzf "${tarball_name}"
+
+echo "✓ Release deployed successfully"
+ls -lh ${tarball_name}
 EOF
 
-    # Clean up local temp file
-    rm -f /tmp/hello_erlang_src.tar.gz
-
-    echo ""
-    echo "✓ Source code uploaded successfully"
-    echo ""
-    echo "Next step: $0 build $env"
+        echo ""
+        echo "✓ Deployment complete!"
+        echo ""
+        echo "Next step: $0 start $env"
+    else
+        echo "✗ CodeBuild failed with status: $status"
+        echo ""
+        echo "View logs with:"
+        echo "  aws codebuild batch-get-builds --ids $build_id"
+        exit 1
+    fi
 }
 
 cmd_start() {
@@ -307,30 +355,10 @@ set -e
 
 cd /opt/hello_erlang
 
-# Find the built tarball
-TARBALL=$(find _build/prod/rel -name "*.tar.gz" 2>/dev/null | head -1)
-if [ -z "$TARBALL" ]; then
-    echo "Error: No release tarball found. Run build first."
+if [ ! -f ./bin/hello_erlang ]; then
+    echo "Error: Release not found. Run upload first."
     exit 1
 fi
-
-TARBALL_NAME=$(basename "$TARBALL")
-
-echo "Stopping existing release (if running)..."
-if [ -f ./bin/hello_erlang ]; then
-    ./bin/hello_erlang stop || true
-    sleep 2
-fi
-
-echo "Backing up current release..."
-if [ -d "./bin" ]; then
-    rm -rf ./backup
-    mkdir -p ./backup
-    mv bin lib releases erts-* ./backup/ 2>/dev/null || true
-fi
-
-echo "Extracting release from $TARBALL..."
-tar -xzf "$TARBALL"
 
 echo "Starting release..."
 ./bin/hello_erlang daemon
@@ -697,9 +725,6 @@ shift 2
 case "$COMMAND" in
     upload)
         cmd_upload "$ENV" "$@"
-        ;;
-    build)
-        cmd_build "$ENV" "$@"
         ;;
     start)
         cmd_start "$ENV" "$@"

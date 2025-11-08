@@ -103,6 +103,148 @@ Resources:
         - Key: Application
           Value: hello-erlang
 
+  # S3 Bucket for build artifacts
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Environment}-hello-erlang-artifacts-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-hello-erlang-artifacts'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # IAM Role for CodeBuild
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-hello-erlang-codebuild-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # CloudWatch Logs
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${Environment}-hello-erlang-build'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${Environment}-hello-erlang-build:*'
+              # S3 access for artifacts
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub '${ArtifactBucket.Arn}/*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # CodeBuild Project
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${Environment}-hello-erlang-build'
+      Description: Build Erlang release for Hello Erlang application
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: S3
+        Location: !Ref ArtifactBucket
+        Name: !Sub '${Environment}-hello-erlang'
+        Path: releases
+        NamespaceType: BUILD_ID
+        Packaging: NONE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: !Ref Environment
+          - Name: ARTIFACT_BUCKET
+            Value: !Ref ArtifactBucket
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                python: 3.11
+              commands:
+                - echo "Installing Erlang/OTP and rebar3..."
+                - yum groupinstall -y "Development Tools"
+                - yum install -y wget tar gzip ncurses-devel openssl-devel autoconf automake unixODBC-devel
+                - cd /tmp
+                - wget https://github.com/erlang/otp/releases/download/OTP-27.1.2/otp_src_27.1.2.tar.gz
+                - tar -xzf otp_src_27.1.2.tar.gz
+                - cd otp_src_27.1.2
+                - ./configure --prefix=/usr/local/erlang
+                - make -j$(nproc)
+                - make install
+                - export PATH=/usr/local/erlang/bin:$PATH
+                - cd /tmp
+                - wget https://s3.amazonaws.com/rebar3/rebar3
+                - chmod +x rebar3
+                - mv rebar3 /usr/local/bin/
+            pre_build:
+              commands:
+                - echo "Build started on $(date)"
+                - export PATH=/usr/local/erlang/bin:$PATH
+                - erl -version
+            build:
+              commands:
+                - echo "Building Erlang release..."
+                - cd /codebuild/output/src
+                - rebar3 as prod tar
+            post_build:
+              commands:
+                - echo "Build completed on $(date)"
+                - TARBALL=$(find _build/prod/rel -name "*.tar.gz" | head -1)
+                - if [ -z "$TARBALL" ]; then echo "Error - tarball not found" && exit 1; fi
+                - echo "Built tarball - $TARBALL"
+          artifacts:
+            files:
+              - '_build/prod/rel/**/*.tar.gz'
+            name: release-$(date +%Y%m%d-%H%M%S).tar.gz
+      TimeoutInMinutes: 30
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-hello-erlang-build'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
   # IAM Role for EC2
   EC2Role:
     Type: AWS::IAM::Role
@@ -120,6 +262,18 @@ Resources:
         - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
         # For SSM access (Session Manager as alternative to SSH)
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: S3ArtifactAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub '${ArtifactBucket.Arn}/*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -166,30 +320,9 @@ Resources:
           # Update system
           yum update -y
 
-          # Install build tools and dependencies
-          yum groupinstall -y "Development Tools"
-          yum install -y wget tar gzip git ncurses-devel openssl-devel \
-            autoconf automake unixODBC-devel
-
-          # Install Erlang/OTP 27 (latest stable)
-          cd /tmp
-          wget https://github.com/erlang/otp/releases/download/OTP-27.1.2/otp_src_27.1.2.tar.gz
-          tar -xzf otp_src_27.1.2.tar.gz
-          cd otp_src_27.1.2
-          ./configure --prefix=/usr/local/erlang
-          make -j$(nproc)
-          make install
-
-          # Add Erlang to PATH
-          echo 'export PATH=/usr/local/erlang/bin:$PATH' >> /etc/profile.d/erlang.sh
-          chmod +x /etc/profile.d/erlang.sh
-          export PATH=/usr/local/erlang/bin:$PATH
-
-          # Install rebar3
-          cd /tmp
-          wget https://s3.amazonaws.com/rebar3/rebar3
-          chmod +x rebar3
-          mv rebar3 /usr/local/bin/
+          # Install minimal runtime dependencies for Erlang ERTS
+          # Note: We don't compile Erlang here - releases are built in CodeBuild
+          yum install -y ncurses-libs openssl-libs unixODBC aws-cli
 
           # Create deployment directory
           mkdir -p /opt/hello_erlang
@@ -197,7 +330,8 @@ Resources:
 
           # Signal successful initialization
           echo "Hello Erlang EC2 instance initialized successfully" > /var/log/hello-erlang-init.log
-          echo "Erlang version: $(/usr/local/erlang/bin/erl -version 2>&1)" >> /var/log/hello-erlang-init.log
+          echo "Instance ready to receive Erlang release from CodeBuild" >> /var/log/hello-erlang-init.log
+          echo "Initialization completed at $(date)" >> /var/log/hello-erlang-init.log
       Tags:
         - Key: Name
           Value: !Sub '${Environment}-hello-erlang'
@@ -312,3 +446,15 @@ Outputs:
   SSHCommand:
     Description: SSH command to connect
     Value: !Sub 'ssh -i ~/.ssh/${KeyName}.pem ec2-user@${ElasticIP}'
+
+  ArtifactBucketName:
+    Description: S3 bucket for build artifacts
+    Value: !Ref ArtifactBucket
+    Export:
+      Name: !Sub '${Environment}-hello-erlang-artifact-bucket'
+
+  CodeBuildProjectName:
+    Description: CodeBuild project name
+    Value: !Ref CodeBuildProject
+    Export:
+      Name: !Sub '${Environment}-hello-erlang-codebuild-project'
