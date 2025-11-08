@@ -5,22 +5,22 @@ files:
     destination: /opt/hello_erlang
 hooks:
   ApplicationStop:
-    - location: config/aws/codedeploy/stop_application.sh
+    - location: scripts/stop_application.sh
       timeout: 60
       runas: ec2-user
   BeforeInstall:
-    - location: config/aws/codedeploy/before_install.sh
+    - location: scripts/before_install.sh
       timeout: 60
       runas: ec2-user
   AfterInstall:
-    - location: config/aws/codedeploy/after_install.sh
+    - location: scripts/after_install.sh
       timeout: 60
       runas: ec2-user
   ApplicationStart:
-    - location: config/aws/codedeploy/start_application.sh
+    - location: scripts/start_application.sh
       timeout: 120
       runas: ec2-user
   ValidateService:
-    - location: config/aws/codedeploy/validate_service.sh
+    - location: scripts/validate_service.sh
       timeout: 60
       runas: ec2-user
