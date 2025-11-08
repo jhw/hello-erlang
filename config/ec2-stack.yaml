@@ -41,19 +41,11 @@ Parameters:
 Conditions:
   HasKeyName: !Not [!Equals [!Ref KeyName, '']]
 
-Mappings:
-  # Amazon Linux 2023 AMI IDs per region
-  RegionMap:
-    us-east-1:
-      AMI: ami-0c55b159cbfafe1f0
-    us-west-2:
-      AMI: ami-0d1cd67c26f5fca19
-    eu-west-1:
-      AMI: ami-0d71ea30463e0ff8d
-    ap-southeast-2:
-      AMI: ami-0c6120f461d6b39e9
-
 Resources:
+  # Get latest Amazon Linux 2023 AMI ID from SSM Parameter Store
+  LatestAL2023AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
   # ALB Security Group
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -159,7 +151,7 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: !Ref InstanceType
-      ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+      ImageId: !Ref LatestAL2023AmiId
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
       IamInstanceProfile: !Ref EC2InstanceProfile
       SubnetId: !Select [0, !Ref ALBSubnets]
