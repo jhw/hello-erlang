@@ -15,17 +15,22 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {
-    echo "Usage: $0 {build|deploy|start|stop|restart|status|ping|init-status} <environment> [options]"
+    echo "Usage: $0 {build|deploy|start|stop|restart|status|ping|list-builds|list-artifacts|logs|init-status} <environment> [options]"
     echo ""
-    echo "Commands:"
-    echo "  build <env>          - Build release in CodeBuild (outputs to S3)"
-    echo "  deploy <env> [build] - Deploy release from S3 to EC2 (latest or specific build-id)"
-    echo "  start <env>          - Start the application on EC2"
-    echo "  stop <env>           - Stop the application on EC2"
-    echo "  restart <env>        - Restart the application on EC2"
-    echo "  status <env>         - Check application status on EC2"
-    echo "  ping <env> [msg]     - Test application endpoint (default message: 'ping')"
-    echo "  init-status <env>    - Check if EC2 instance initialization is complete"
+    echo "Build & Deploy Commands:"
+    echo "  build <env>              - Build release in CodeBuild (outputs to S3)"
+    echo "  deploy <env> [build]     - Deploy release from S3 to EC2 (latest or specific build-id)"
+    echo "  list-builds <env>        - List recent CodeBuild builds"
+    echo "  list-artifacts <env>     - List available releases in S3"
+    echo "  logs <env> <build-id>    - Show logs for a CodeBuild build"
+    echo ""
+    echo "Application Commands:"
+    echo "  start <env>              - Start the application on EC2"
+    echo "  stop <env>               - Stop the application on EC2"
+    echo "  restart <env>            - Restart the application on EC2"
+    echo "  status <env>             - Check application status on EC2"
+    echo "  ping <env> [msg]         - Test application endpoint (default message: 'ping')"
+    echo "  init-status <env>        - Check if EC2 instance initialization is complete"
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
@@ -33,16 +38,16 @@ usage() {
     echo "  --key-file <path>  - SSH key file path (default: auto-discover from stack)"
     echo ""
     echo "Deployment workflow:"
-    echo "  1. $0 build dev         # Build in CodeBuild → S3"
-    echo "  2. $0 deploy dev        # Deploy latest from S3 → EC2"
-    echo "  3. $0 start dev         # Start application"
-    echo "  4. $0 ping dev          # Verify it's responding"
+    echo "  1. $0 build dev             # Build in CodeBuild → S3"
+    echo "  2. $0 list-artifacts dev    # See what's available"
+    echo "  3. $0 deploy dev            # Deploy latest from S3 → EC2"
+    echo "  4. $0 start dev             # Start application"
+    echo "  5. $0 ping dev              # Verify it's responding"
     echo ""
     echo "Other examples:"
-    echo "  $0 deploy dev abc123    # Deploy specific build-id"
-    echo "  $0 init-status dev      # Check if EC2 is ready"
-    echo "  $0 status dev           # Check if app is running"
-    echo "  $0 restart dev          # Restart running app"
+    echo "  $0 deploy dev abc123        # Deploy specific build-id"
+    echo "  $0 logs dev abc123          # View build logs"
+    echo "  $0 list-builds dev          # See recent builds"
     exit 1
 }
 
@@ -656,6 +661,110 @@ cmd_ping() {
     fi
 }
 
+cmd_list_builds() {
+    local env=$1
+
+    local codebuild_project=$(get_stack_output "$env" "CodeBuildProjectName")
+
+    if [ -z "$codebuild_project" ]; then
+        echo "Error: Could not get CodeBuild project name from stack outputs"
+        exit 1
+    fi
+
+    echo "Recent CodeBuild builds for: $codebuild_project"
+    echo ""
+
+    # Get list of builds for this project
+    local build_ids=$(aws codebuild list-builds-for-project \
+        --project-name "$codebuild_project" \
+        --sort-order DESCENDING \
+        --max-items 20 \
+        --query 'ids' \
+        --output text)
+
+    if [ -z "$build_ids" ]; then
+        echo "No builds found."
+        return
+    fi
+
+    # Get details for these builds
+    aws codebuild batch-get-builds \
+        --ids $build_ids \
+        --query 'builds[*].[id,buildStatus,startTime,endTime]' \
+        --output table
+}
+
+cmd_list_artifacts() {
+    local env=$1
+
+    local artifact_bucket=$(get_stack_output "$env" "ArtifactBucketName")
+
+    if [ -z "$artifact_bucket" ]; then
+        echo "Error: Could not get artifact bucket name from stack outputs"
+        exit 1
+    fi
+
+    echo "Available releases in S3: s3://${artifact_bucket}/releases/"
+    echo ""
+
+    # List all release artifacts
+    local artifacts=$(aws s3 ls "s3://${artifact_bucket}/releases/" --recursive | grep "\.tar\.gz$")
+
+    if [ -z "$artifacts" ]; then
+        echo "No release artifacts found."
+        echo ""
+        echo "Run: $0 build $env"
+        return
+    fi
+
+    echo "$artifacts" | while read -r date time size path; do
+        local build_id=$(echo "$path" | sed 's|releases/\([^/]*\)/.*|\1|')
+        local filename=$(basename "$path")
+        printf "%-20s  %-10s  %s  %s\n" "$date $time" "$size" "$build_id" "$filename"
+    done
+}
+
+cmd_logs() {
+    local env=$1
+    local build_id=$2
+
+    if [ -z "$build_id" ]; then
+        echo "Error: build-id required"
+        echo "Usage: $0 logs <env> <build-id>"
+        echo ""
+        echo "Get build-id from: $0 list-builds $env"
+        exit 1
+    fi
+
+    local codebuild_project=$(get_stack_output "$env" "CodeBuildProjectName")
+
+    if [ -z "$codebuild_project" ]; then
+        echo "Error: Could not get CodeBuild project name from stack outputs"
+        exit 1
+    fi
+
+    echo "Fetching logs for build: $build_id"
+    echo "---"
+    echo ""
+
+    local log_group="/aws/codebuild/${codebuild_project}"
+    local log_stream="${build_id#*:}"
+
+    # Fetch all log events
+    aws logs get-log-events \
+        --log-group-name "$log_group" \
+        --log-stream-name "$log_stream" \
+        --start-from-head \
+        --output json 2>/dev/null | jq -r '.events[]?.message' 2>/dev/null
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Could not fetch logs for build $build_id"
+        echo ""
+        echo "Verify build-id with: $0 list-builds $env"
+        exit 1
+    fi
+}
+
 cmd_init_status() {
     local env=$1
     shift
@@ -730,6 +839,15 @@ case "$COMMAND" in
         ;;
     deploy)
         cmd_deploy "$ENV" "$@"
+        ;;
+    list-builds)
+        cmd_list_builds "$ENV" "$@"
+        ;;
+    list-artifacts)
+        cmd_list_artifacts "$ENV" "$@"
+        ;;
+    logs)
+        cmd_logs "$ENV" "$@"
         ;;
     start)
         cmd_start "$ENV" "$@"

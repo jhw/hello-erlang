@@ -1,6 +1,5 @@
 ### short
 
-- codebuild build
 - logging >>> chatops
 - state >>> dynamodb
 - telemetry >>> alarms?
