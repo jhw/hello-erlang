@@ -501,8 +501,8 @@ cmd_ping() {
     fi
 
     local response=$(curl -s -w "\n%{http_code}" --connect-timeout 5 --max-time 10 "$url" 2>/dev/null)
-    local http_code=$(echo "$response" | tail -n1)
-    local body=$(echo "$response" | head -n-1)
+    local http_code=$(echo "$response" | tail -n 1)
+    local body=$(echo "$response" | sed '$d')
 
     if [ "$http_code" == "200" ] && [ "$body" == "$message" ]; then
         echo "✓ Application is responding"
