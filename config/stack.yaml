@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Hello Erlang - EC2 deployment stack'
+Description: 'Hello Erlang - Complete deployment stack (EC2, CodeBuild, CodeDeploy, Lambda, S3, ALB)'
 
 Parameters:
   Environment:

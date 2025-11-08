@@ -96,7 +96,7 @@ The CloudWatch Agent watches log files and streams them to CloudWatch Logs.
 
 ### UserData Installation
 
-Add to `config/ec2-stack.yaml` EC2Instance UserData:
+Add to `config/stack.yaml` EC2Instance UserData:
 
 ```yaml
 UserData:
@@ -178,7 +178,7 @@ UserData:
 
 ### Lambda Error Notifier
 
-Add to `config/ec2-stack.yaml`:
+Add to `config/stack.yaml`:
 
 ```yaml
 Resources:
@@ -482,7 +482,7 @@ For local development, use **Option C (colored console)** by default, plus **Opt
 - [ ] Test locally with `make start` and verify error logs
 
 ### Phase 2: EC2 CloudWatch Integration
-- [ ] Update `config/ec2-stack.yaml` UserData with CloudWatch Agent installation
+- [ ] Update `config/stack.yaml` UserData with CloudWatch Agent installation
 - [ ] Add CloudWatch Agent configuration for log file monitoring
 - [ ] Deploy stack and verify logs appear in CloudWatch
 

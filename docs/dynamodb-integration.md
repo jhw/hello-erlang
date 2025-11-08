@@ -80,7 +80,7 @@ This document outlines the strategy for integrating DynamoDB with the hello-erla
 
 ### Why Two Stacks?
 
-1. **Compute Stack** (existing `ec2-stack.yaml`):
+1. **Compute Stack** (existing `stack.yaml`):
    - Short-lived resources (EC2, ALB)
    - Frequently created/destroyed during development
    - Can be torn down without data loss
@@ -95,7 +95,7 @@ This document outlines the strategy for integrating DynamoDB with the hello-erla
 
 ```
 config/
-├── ec2-stack.yaml          # Compute resources (existing)
+├── stack.yaml              # Compute resources (existing)
 ├── dynamodb-stack.yaml     # Data resources (new)
 └── aws.sh                  # Shared configuration
 
@@ -241,7 +241,7 @@ Outputs:
 
 ## 4. Updated EC2 Stack with DynamoDB IAM Permissions
 
-### Update config/ec2-stack.yaml
+### Update config/stack.yaml
 
 Add DynamoDB permissions to the EC2 IAM role:
 
@@ -324,7 +324,7 @@ exec "$SCRIPT_DIR/aws-stack.sh" \
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-TEMPLATE_FILE="$PROJECT_ROOT/config/ec2-stack.yaml"
+TEMPLATE_FILE="$PROJECT_ROOT/config/stack.yaml"
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 # Load defaults from aws.sh if it exists

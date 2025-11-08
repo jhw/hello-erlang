@@ -96,7 +96,7 @@ cmd_build() {
 
     zip -q -r "$source_bundle" \
         apps config/buildspec.yml rebar.config rebar.lock \
-        -x "*.git*" "*_build*" "*.rebar3*" "*.beam" "config/ec2-stack.yaml" "config/aws.sh"
+        -x "*.git*" "*_build*" "*.rebar3*" "*.beam" "config/stack.yaml" "config/env.sh"
 
     echo "✓ Source bundle created: $(basename $source_bundle)"
     echo ""
