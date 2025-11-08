@@ -15,36 +15,27 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {
-    echo "Usage: $0 {build|rollback|deployment-status|ping} <environment> [options]"
+    echo "Usage: $0 {build|ping} <environment> [options]"
     echo ""
     echo "Build Commands:"
-    echo "  build <env>                     - Build release in CodeBuild (auto-deploys via CodeDeploy)"
-    echo ""
-    echo "Deployment Commands:"
-    echo "  rollback <env> <build-id>       - Deploy a specific previous build"
-    echo "  deployment-status <env> [id]    - Check CodeDeploy deployment status"
-    echo "  ping <env> [msg]                - Test application endpoint via ALB"
+    echo "  build <env>         - Build release in CodeBuild (auto-deploys via CodeDeploy)"
+    echo "  ping <env> [msg]    - Test application endpoint via ALB"
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
     echo "Deployment workflow:"
-    echo "  1. $0 build dev                    # Build in CodeBuild → S3 → Auto-deploy via CodeDeploy"
-    echo "  2. $0 deployment-status dev        # Check deployment status"
-    echo "  3. $0 ping dev                     # Verify application is responding"
-    echo ""
-    echo "Rollback workflow:"
-    echo "  1. ./scripts/aws-debug.sh list-artifacts dev  # Find previous build-id"
-    echo "  2. $0 rollback dev abc123                     # Deploy previous build"
+    echo "  1. $0 build dev     # Build in CodeBuild → S3 → Auto-deploy via CodeDeploy"
+    echo "  2. $0 ping dev      # Verify application is responding"
     echo ""
     echo "Debugging (use aws-debug.sh):"
-    echo "  ./scripts/aws-debug.sh list-builds dev        # List recent builds"
-    echo "  ./scripts/aws-debug.sh logs dev abc123        # View build logs"
-    echo "  ./scripts/aws-debug.sh list-artifacts dev     # List available artifacts"
-    echo "  ./scripts/aws-debug.sh list-deployments dev   # List recent deployments"
+    echo "  ./scripts/aws-debug.sh list-builds dev         # List recent builds"
+    echo "  ./scripts/aws-debug.sh logs dev <build-id>     # View build logs"
+    echo "  ./scripts/aws-debug.sh list-artifacts dev      # List available artifacts"
+    echo "  ./scripts/aws-debug.sh list-deployments dev    # List recent deployments"
+    echo "  ./scripts/aws-debug.sh deployment-logs dev <id> # View deployment details"
     echo ""
-    echo "NOTE: Deployments now happen automatically via AWS CodeDeploy."
-    echo "      The 'deploy', 'start', 'stop', 'status' commands have been removed."
-    echo "      Use 'rollback' to deploy a specific build or 'deployment-status' to check progress."
+    echo "NOTE: Deployments happen automatically via AWS CodeDeploy."
+    echo "      Use AWS Console or CodeDeploy API for manual rollback operations."
     exit 1
 }
 
@@ -207,190 +198,14 @@ cmd_build() {
         echo "AWS CodeDeploy will automatically deploy this release to EC2."
         echo ""
         echo "Next steps:"
-        echo "  $0 deployment-status $env     # Check deployment progress"
-        echo "  $0 ping $env                  # Verify application is responding"
+        echo "  $0 ping $env                                # Verify application is responding"
+        echo "  ./scripts/aws-debug.sh list-deployments $env  # Check deployment status"
     else
         echo "✗ CodeBuild failed with status: $status"
         echo ""
         echo "View logs with:"
         echo "  aws codebuild batch-get-builds --ids $build_id"
         exit 1
-    fi
-}
-
-cmd_rollback() {
-    local env=$1
-    local build_id=$2
-
-    if [ -z "$build_id" ]; then
-        echo "Error: build-id required"
-        echo "Usage: $0 rollback <env> <build-id>"
-        echo ""
-        echo "Get build-id from: $0 list-artifacts $env"
-        exit 1
-    fi
-
-    # Get stack outputs
-    local artifact_bucket=$(get_stack_output "$env" "ArtifactBucketName")
-    local codedeploy_app=$(get_stack_output "$env" "CodeDeployApplicationName")
-    local deployment_group=$(get_stack_output "$env" "DeploymentGroupName")
-
-    if [ -z "$artifact_bucket" ] || [ -z "$codedeploy_app" ] || [ -z "$deployment_group" ]; then
-        echo "Error: Could not get required stack outputs"
-        exit 1
-    fi
-
-    echo "=== Rolling back to previous build ==="
-    echo "  Environment: $env"
-    echo "  Build ID: $build_id"
-    echo ""
-
-    # Find artifact for build-id
-    echo "Looking for artifact with build ID: $build_id"
-    local artifact_key=$(aws s3 ls "s3://${artifact_bucket}/releases/${build_id}/" --recursive | \
-        grep "\.tar\.gz$" | awk '{print $4}' | head -1)
-
-    if [ -z "$artifact_key" ]; then
-        echo "✗ Error: No artifact found for build ID: $build_id"
-        echo ""
-        echo "Available builds:"
-        aws s3 ls "s3://${artifact_bucket}/releases/" --recursive | grep "\.tar\.gz$" | \
-            awk '{print $4}' | sed 's|releases/\([^/]*\)/.*|\1|' | sort -u
-        exit 1
-    fi
-
-    echo "✓ Found artifact: s3://${artifact_bucket}/${artifact_key}"
-    echo ""
-
-    # Create CodeDeploy deployment
-    echo "Creating CodeDeploy deployment..."
-    local deployment_id=$(aws deploy create-deployment \
-        --application-name "$codedeploy_app" \
-        --deployment-group-name "$deployment_group" \
-        --s3-location bucket="$artifact_bucket",key="$artifact_key",bundleType=tgz \
-        --description "Manual rollback to build: $build_id" \
-        --query 'deploymentId' \
-        --output text)
-
-    if [ -z "$deployment_id" ]; then
-        echo "✗ Error: Failed to create deployment"
-        exit 1
-    fi
-
-    echo "✓ Deployment created: $deployment_id"
-    echo ""
-    echo "Monitoring deployment progress..."
-    echo ""
-
-    # Monitor deployment status
-    local status="Created"
-    while [[ "$status" != "Succeeded" && "$status" != "Failed" && "$status" != "Stopped" ]]; do
-        sleep 5
-        status=$(aws deploy get-deployment \
-            --deployment-id "$deployment_id" \
-            --query 'deploymentInfo.status' \
-            --output text 2>/dev/null || echo "Unknown")
-
-        echo "  Status: $status"
-    done
-
-    echo ""
-    if [ "$status" == "Succeeded" ]; then
-        echo "✓ Rollback completed successfully!"
-        echo ""
-        echo "Verify with: $0 ping $env"
-    else
-        echo "✗ Rollback failed with status: $status"
-        echo ""
-        echo "View deployment details:"
-        echo "  aws deploy get-deployment --deployment-id $deployment_id"
-        exit 1
-    fi
-}
-
-cmd_deployment_status() {
-    local env=$1
-    local deployment_id=$2
-
-    local codedeploy_app=$(get_stack_output "$env" "CodeDeployApplicationName")
-    local deployment_group=$(get_stack_output "$env" "DeploymentGroupName")
-
-    if [ -z "$codedeploy_app" ] || [ -z "$deployment_group" ]; then
-        echo "Error: Could not get CodeDeploy information from stack outputs"
-        exit 1
-    fi
-
-    # If no deployment ID provided, get the most recent one
-    if [ -z "$deployment_id" ]; then
-        echo "Finding most recent deployment..."
-        deployment_id=$(aws deploy list-deployments \
-            --application-name "$codedeploy_app" \
-            --deployment-group-name "$deployment_group" \
-            --max-items 1 \
-            --query 'deployments[0]' \
-            --output text 2>/dev/null)
-
-        if [ -z "$deployment_id" ] || [ "$deployment_id" == "None" ]; then
-            echo "No deployments found for environment '$env'"
-            echo ""
-            echo "Trigger a deployment with: $0 build $env"
-            exit 0
-        fi
-    fi
-
-    echo "=== CodeDeploy Deployment Status ==="
-    echo "  Environment: $env"
-    echo "  Deployment ID: $deployment_id"
-    echo ""
-
-    # Get full deployment info
-    local deployment_info=$(aws deploy get-deployment \
-        --deployment-id "$deployment_id" \
-        --output json 2>/dev/null)
-
-    if [ -z "$deployment_info" ]; then
-        echo "Error: Could not retrieve deployment information"
-        exit 1
-    fi
-
-    # Parse deployment details
-    local status=$(echo "$deployment_info" | jq -r '.deploymentInfo.status')
-    local description=$(echo "$deployment_info" | jq -r '.deploymentInfo.description // "N/A"')
-    local create_time=$(echo "$deployment_info" | jq -r '.deploymentInfo.createTime')
-    local complete_time=$(echo "$deployment_info" | jq -r '.deploymentInfo.completeTime // "In progress"')
-
-    echo "Status: $status"
-    echo "Description: $description"
-    echo "Created: $(date -d @$create_time 2>/dev/null || date -r $create_time)"
-    if [ "$complete_time" != "In progress" ]; then
-        echo "Completed: $(date -d @$complete_time 2>/dev/null || date -r $complete_time)"
-    fi
-    echo ""
-
-    # Show lifecycle events
-    echo "Lifecycle Events:"
-    aws deploy get-deployment \
-        --deployment-id "$deployment_id" \
-        --query 'deploymentInfo.instancesSummary' \
-        --output table
-
-    if [ "$status" == "Succeeded" ]; then
-        echo ""
-        echo "✓ Deployment successful!"
-        echo ""
-        echo "Verify application: $0 ping $env"
-    elif [ "$status" == "Failed" ] || [ "$status" == "Stopped" ]; then
-        echo ""
-        echo "✗ Deployment $status"
-        echo ""
-        echo "View detailed error information:"
-        echo "  aws deploy get-deployment --deployment-id $deployment_id"
-    elif [ "$status" == "InProgress" ] || [ "$status" == "Created" ]; then
-        echo ""
-        echo "⏳ Deployment in progress..."
-        echo ""
-        echo "Check again in a few moments with:"
-        echo "  $0 deployment-status $env $deployment_id"
     fi
 }
 
@@ -457,12 +272,6 @@ shift 2
 case "$COMMAND" in
     build)
         cmd_build "$ENV" "$@"
-        ;;
-    rollback)
-        cmd_rollback "$ENV" "$@"
-        ;;
-    deployment-status)
-        cmd_deployment_status "$ENV" "$@"
         ;;
     ping)
         cmd_ping "$ENV" "$@"
