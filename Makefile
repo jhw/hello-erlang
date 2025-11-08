@@ -22,10 +22,9 @@ help:
 	@echo "  make aws-help - Show AWS deployment commands"
 	@echo ""
 	@echo "Or use scripts directly:"
-	@echo "  scripts/build.sh {compile|release|clean}"
-	@echo "  scripts/dev.sh {start|stop|restart|status|ping}"
-	@echo "  scripts/aws-stack.sh {create|delete|list|...}"
-	@echo "  scripts/aws-deploy.sh <env>"
+	@echo "  scripts/local.sh {compile|release|start|stop|console|...}"
+	@echo "  scripts/aws-stack.sh {deploy|delete|list|...}"
+	@echo "  scripts/aws-deploy.sh {build|deploy|start|...} <env>"
 
 aws-help:
 	@echo "Hello Erlang - AWS Deployment Commands"
@@ -54,29 +53,29 @@ aws-help:
 
 # Build targets
 compile:
-	@scripts/build.sh compile
+	@scripts/local.sh compile
 
 release:
-	@scripts/build.sh release
+	@scripts/local.sh release
 
 clean:
-	@scripts/build.sh clean
+	@scripts/local.sh clean
 
 # Dev targets
 start:
-	@scripts/dev.sh start
+	@scripts/local.sh start
 
 stop:
-	@scripts/dev.sh stop
+	@scripts/local.sh stop
 
 restart:
-	@scripts/dev.sh restart
+	@scripts/local.sh restart
 
 status:
-	@scripts/dev.sh status
+	@scripts/local.sh status
 
 console:
-	@scripts/dev.sh console
+	@scripts/local.sh console
 
 # Deployment targets
 package:
