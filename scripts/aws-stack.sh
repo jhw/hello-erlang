@@ -117,7 +117,7 @@ create_stack() {
 
     # Apply defaults from config/aws.sh if set, otherwise use hardcoded defaults
     local key_name="${DEFAULT_KEY_NAME:-}"
-    local instance_type="${DEFAULT_INSTANCE_TYPE:-t3.small}"
+    local instance_type="${DEFAULT_INSTANCE_TYPE:-t3.micro}"
     local ssh_location="${DEFAULT_SSH_LOCATION:-0.0.0.0/0}"
     local subnets="${DEFAULT_ALB_SUBNETS:-}"
     local vpc_id="${DEFAULT_VPC_ID:-}"
