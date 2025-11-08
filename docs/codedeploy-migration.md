@@ -110,7 +110,7 @@ CodeBuild now creates a deployment bundle containing:
 - `appspec.yml`
 - CodeDeploy lifecycle scripts (`scripts/codedeploy/`)
 
-This bundle is packaged as `hello_erlang_codedeploy.tar.gz` and uploaded to S3.
+This bundle is packaged as `hello_erlang.tar.gz` and uploaded to S3.
 
 ## Command Changes
 
@@ -351,7 +351,7 @@ tail -f ./log/*.log
 aws deploy create-deployment \
   --application-name dev-hello-erlang \
   --deployment-group-name dev-hello-erlang-dg \
-  --s3-location bucket=dev-hello-erlang-artifacts-123456789012,key=releases/<build-id>/hello_erlang_codedeploy.tar.gz,bundleType=tgz
+  --s3-location bucket=dev-hello-erlang-artifacts-123456789012,key=releases/<build-id>/hello_erlang.tar.gz,bundleType=tgz
 ```
 
 ## Security Improvements
