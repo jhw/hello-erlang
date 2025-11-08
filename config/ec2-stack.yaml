@@ -194,48 +194,7 @@ Resources:
             Value: !Ref ArtifactBucket
       Source:
         Type: NO_SOURCE
-        BuildSpec: |
-          version: 0.2
-          phases:
-            install:
-              runtime-versions:
-                python: 3.11
-              commands:
-                - echo "Installing Erlang/OTP and rebar3..."
-                - yum groupinstall -y "Development Tools"
-                - yum install -y wget tar gzip ncurses-devel openssl-devel autoconf automake unixODBC-devel
-                - cd /tmp
-                - wget https://github.com/erlang/otp/releases/download/OTP-27.1.2/otp_src_27.1.2.tar.gz
-                - tar -xzf otp_src_27.1.2.tar.gz
-                - cd otp_src_27.1.2
-                - ./configure --prefix=/usr/local/erlang
-                - make -j$(nproc)
-                - make install
-                - export PATH=/usr/local/erlang/bin:$PATH
-                - cd /tmp
-                - wget https://s3.amazonaws.com/rebar3/rebar3
-                - chmod +x rebar3
-                - mv rebar3 /usr/local/bin/
-            pre_build:
-              commands:
-                - echo "Build started on $(date)"
-                - export PATH=/usr/local/erlang/bin:$PATH
-                - erl -version
-            build:
-              commands:
-                - echo "Building Erlang release..."
-                - cd /codebuild/output/src
-                - rebar3 as prod tar
-            post_build:
-              commands:
-                - echo "Build completed on $(date)"
-                - TARBALL=$(find _build/prod/rel -name "*.tar.gz" | head -1)
-                - if [ -z "$TARBALL" ]; then echo "Error - tarball not found" && exit 1; fi
-                - echo "Built tarball - $TARBALL"
-          artifacts:
-            files:
-              - '_build/prod/rel/**/*.tar.gz'
-            name: release-$(date +%Y%m%d-%H%M%S).tar.gz
+        BuildSpec: config/buildspec.yml
       TimeoutInMinutes: 30
       Tags:
         - Key: Name

@@ -204,8 +204,8 @@ cmd_upload() {
     local source_bundle="/tmp/hello_erlang_source_${timestamp}.zip"
 
     zip -q -r "$source_bundle" \
-        apps config rebar.config rebar.lock \
-        -x "*.git*" "*_build*" "*.rebar3*" "*.beam"
+        apps config/buildspec.yml rebar.config rebar.lock \
+        -x "*.git*" "*_build*" "*.rebar3*" "*.beam" "config/ec2-stack.yaml" "config/aws.sh"
 
     echo "✓ Source bundle created: $(basename $source_bundle)"
     echo ""
