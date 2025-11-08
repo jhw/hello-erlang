@@ -15,10 +15,11 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {
-    echo "Usage: $0 {build|upload|start|stop|restart|status|deploy} <environment> [options]"
+    echo "Usage: $0 {build|clean|upload|start|stop|restart|status|deploy} <environment> [options]"
     echo ""
     echo "Commands:"
     echo "  build <env>     - Build release tarball locally"
+    echo "  clean <env>     - Remove local tarball"
     echo "  upload <env>    - Upload tarball to EC2 instance"
     echo "  start <env>     - Start the application on EC2"
     echo "  stop <env>      - Stop the application on EC2"
@@ -33,6 +34,7 @@ usage() {
     echo ""
     echo "Examples:"
     echo "  $0 build dev              - Build tarball for deployment"
+    echo "  $0 clean dev              - Remove local tarball"
     echo "  $0 upload dev             - Upload tarball to dev environment"
     echo "  $0 restart dev            - Restart app in dev environment"
     echo "  $0 deploy prod            - Full deploy to production"
@@ -144,6 +146,20 @@ cmd_build() {
     fi
 
     echo "✓ Tarball built: $tarball"
+}
+
+cmd_clean() {
+    local env=$1
+
+    if ! check_tarball_exists; then
+        echo "No tarball found to clean"
+        return 0
+    fi
+
+    local tarball=$(get_tarball_path)
+    echo "Removing tarball: $tarball"
+    rm -f "$tarball"
+    echo "✓ Tarball removed"
 }
 
 cmd_upload() {
@@ -457,6 +473,9 @@ shift 2
 case "$COMMAND" in
     build)
         cmd_build "$ENV"
+        ;;
+    clean)
+        cmd_clean "$ENV"
         ;;
     upload)
         cmd_upload "$ENV" "$@"
