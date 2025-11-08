@@ -488,8 +488,14 @@ cmd_ping() {
     shift
     local message="${1:-ping}"
 
-    local instance_ip=$(get_instance_ip "$env") || exit 1
-    local url="http://${instance_ip}:8080/echo?message=${message}"
+    # Get ALB DNS name from stack outputs
+    local alb_dns=$(get_stack_output "$env" "LoadBalancerDNS")
+    if [ -z "$alb_dns" ]; then
+        echo "Error: Could not get Load Balancer DNS for environment '$env'" >&2
+        exit 1
+    fi
+
+    local url="http://${alb_dns}/echo?message=${message}"
 
     echo "Testing application endpoint..."
     echo "  URL: $url"
