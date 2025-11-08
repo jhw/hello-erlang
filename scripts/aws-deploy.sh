@@ -15,17 +15,16 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {
-    echo "Usage: $0 {build|start|stop|restart|status|ping|logs|init-status} <environment> [options]"
+    echo "Usage: $0 {build|start|stop|restart|status|ping|init-status} <environment> [options]"
     echo ""
     echo "Commands:"
-    echo "  init-status <env> [--follow] - Check if UserData initialization is complete"
     echo "  build <env>     - Build release in CodeBuild and deploy to EC2 instance"
     echo "  start <env>     - Start the application on EC2"
     echo "  stop <env>      - Stop the application on EC2"
     echo "  restart <env>   - Restart the application on EC2"
     echo "  status <env>    - Check application status on EC2"
     echo "  ping <env> [msg] - Test application endpoint (default message: 'ping')"
-    echo "  logs <env>      - Tail initialization logs (useful during first boot)"
+    echo "  init-status <env> - Check if EC2 instance initialization is complete"
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
@@ -33,16 +32,15 @@ usage() {
     echo "  --key-file <path>  - SSH key file path (default: auto-discover from stack)"
     echo ""
     echo "Deployment workflow:"
-    echo "  0. $0 init-status dev  # Wait for UserData to complete"
     echo "  1. $0 build dev        # Build in CodeBuild and deploy to EC2"
     echo "  2. $0 start dev        # Start application"
     echo "  3. $0 ping dev         # Verify it's responding"
     echo ""
     echo "Other examples:"
-    echo "  $0 logs dev        - Monitor UserData initialization"
-    echo "  $0 status dev      - Check if app is running"
-    echo "  $0 restart dev     - Restart running app"
-    echo "  $0 stop dev        - Stop app"
+    echo "  $0 init-status dev # Check if EC2 is ready (rarely needed)"
+    echo "  $0 status dev      # Check if app is running"
+    echo "  $0 restart dev     # Restart running app"
+    echo "  $0 stop dev        # Stop app"
     exit 1
 }
 
@@ -97,32 +95,6 @@ get_key_file() {
     fi
 
     echo "$key_file"
-}
-
-check_tarball_exists() {
-    local tarball=$(find _build/prod/rel -name "*.tar.gz" 2>/dev/null | head -1)
-    if [ -z "$tarball" ]; then
-        return 1
-    fi
-    return 0
-}
-
-get_tarball_path() {
-    local tarball=$(find _build/prod/rel -name "*.tar.gz" 2>/dev/null | head -1)
-    echo "$tarball"
-}
-
-check_tarball_on_remote() {
-    local instance_ip=$1
-    local key_file=$2
-    local tarball_name=$(basename "$(get_tarball_path)")
-
-    ssh -i "$key_file" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        -o ConnectTimeout=5 \
-        "ec2-user@${instance_ip}" \
-        "test -f ${DEPLOY_DIR}/${tarball_name}" 2>/dev/null
 }
 
 check_app_extracted() {
@@ -607,44 +579,10 @@ cmd_ping() {
     fi
 }
 
-cmd_logs() {
-    local env=$1
-    shift
-    local key_file=""
-
-    # Parse options
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --key-file)
-                key_file="$2"
-                shift 2
-                ;;
-            *)
-                echo "Unknown option: $1"
-                usage
-                ;;
-        esac
-    done
-
-    local instance_ip=$(get_instance_ip "$env") || exit 1
-    key_file=$(get_key_file "$env" "$key_file") || exit 1
-
-    echo "Tailing initialization logs from $instance_ip..."
-    echo "Press Ctrl+C to exit"
-    echo ""
-
-    ssh -i "$key_file" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        "ec2-user@${instance_ip}" \
-        "tail -f /var/log/hello-erlang-init.log"
-}
-
 cmd_init_status() {
     local env=$1
     shift
     local key_file=""
-    local follow=false
 
     # Parse options
     while [[ $# -gt 0 ]]; do
@@ -652,10 +590,6 @@ cmd_init_status() {
             --key-file)
                 key_file="$2"
                 shift 2
-                ;;
-            --follow|-f)
-                follow=true
-                shift
                 ;;
             *)
                 echo "Unknown option: $1"
@@ -667,7 +601,7 @@ cmd_init_status() {
     local instance_ip=$(get_instance_ip "$env") || exit 1
     key_file=$(get_key_file "$env" "$key_file") || exit 1
 
-    echo "Checking initialization status on $instance_ip..."
+    echo "Checking EC2 instance readiness on $instance_ip..."
     echo ""
 
     # Check if deployment directory exists
@@ -680,36 +614,6 @@ cmd_init_status() {
 
         echo "✓ Deployment directory exists: ${DEPLOY_DIR}"
 
-        # Check if Erlang is installed
-        if ssh -i "$key_file" \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "ec2-user@${instance_ip}" \
-            "test -f /usr/local/erlang/bin/erl" 2>/dev/null; then
-
-            local erl_version=$(ssh -i "$key_file" \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
-                "ec2-user@${instance_ip}" \
-                "/usr/local/erlang/bin/erl -version 2>&1")
-
-            echo "✓ Erlang installed: $erl_version"
-        else
-            echo "✗ Erlang not yet installed"
-        fi
-
-        # Check if rebar3 is installed
-        if ssh -i "$key_file" \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "ec2-user@${instance_ip}" \
-            "command -v rebar3 > /dev/null" 2>/dev/null; then
-
-            echo "✓ rebar3 installed"
-        else
-            echo "✗ rebar3 not yet installed"
-        fi
-
         # Check if init log exists
         if ssh -i "$key_file" \
             -o StrictHostKeyChecking=no \
@@ -717,44 +621,20 @@ cmd_init_status() {
             "ec2-user@${instance_ip}" \
             "test -f /var/log/hello-erlang-init.log" 2>/dev/null; then
 
-            echo "✓ Initialization complete"
+            echo "✓ EC2 initialization complete"
             echo ""
-            ssh -i "$key_file" \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
-                "ec2-user@${instance_ip}" \
-                "cat /var/log/hello-erlang-init.log"
+            echo "Instance is ready. You can now run:"
+            echo "  ./scripts/aws-deploy.sh build $env"
         else
-            echo "⏳ Initialization still in progress"
+            echo "⏳ EC2 initialization still in progress"
             echo ""
-            if [ "$follow" = true ]; then
-                echo "Following cloud-init logs (Press Ctrl+C to exit)..."
-                echo ""
-                ssh -i "$key_file" \
-                    -o StrictHostKeyChecking=no \
-                    -o UserKnownHostsFile=/dev/null \
-                    "ec2-user@${instance_ip}" \
-                    "sudo tail -f /var/log/cloud-init-output.log"
-            else
-                echo "Run './scripts/aws-deploy.sh init-status $env --follow' to monitor progress"
-            fi
+            echo "Wait a moment and try again."
         fi
     else
-        echo "✗ Deployment directory not found"
-        echo "⏳ UserData script still running (compiling Erlang/OTP)"
+        echo "⏳ EC2 instance still initializing..."
         echo ""
-        if [ "$follow" = true ]; then
-            echo "Following cloud-init logs (Press Ctrl+C to exit)..."
-            echo ""
-            ssh -i "$key_file" \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
-                "ec2-user@${instance_ip}" \
-                "sudo tail -f /var/log/cloud-init-output.log"
-        else
-            echo "This can take 5-10 minutes. Run with --follow to monitor:"
-            echo "  ./scripts/aws-deploy.sh init-status $env --follow"
-        fi
+        echo "UserData script is running. This usually takes 30-60 seconds."
+        echo "Wait a moment and try again."
     fi
 }
 
@@ -785,9 +665,6 @@ case "$COMMAND" in
         ;;
     ping)
         cmd_ping "$ENV" "$@"
-        ;;
-    logs)
-        cmd_logs "$ENV" "$@"
         ;;
     init-status)
         cmd_init_status "$ENV" "$@"
