@@ -162,7 +162,8 @@ Resources:
       ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
       IamInstanceProfile: !Ref EC2InstanceProfile
-      SecurityGroups:
+      SubnetId: !Select [0, !Ref ALBSubnets]
+      SecurityGroupIds:
         - !Ref EC2SecurityGroup
       UserData:
         Fn::Base64: !Sub |
