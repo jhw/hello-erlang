@@ -162,7 +162,8 @@ create_stack() {
     fi
 
     # Auto-discover VPC and subnets if not provided
-    if [ -z "$subnets" ] || [ -z "$vpc_id" ]; then
+    if [ -z "$subnets" ]; then
+        # Need to discover both VPC and subnets
         local vpc_subnet_result
         if ! vpc_subnet_result=$(auto_discover_vpc_and_subnets); then
             echo ""
@@ -172,6 +173,19 @@ create_stack() {
         # Parse the result (format: vpc_id|subnet_list)
         vpc_id=$(echo "$vpc_subnet_result" | cut -d'|' -f1)
         subnets=$(echo "$vpc_subnet_result" | cut -d'|' -f2)
+    elif [ -z "$vpc_id" ]; then
+        # Subnets provided but VPC not - look up VPC from first subnet
+        local first_subnet=$(echo "$subnets" | cut -d',' -f1)
+        vpc_id=$(aws ec2 describe-subnets \
+            --subnet-ids "$first_subnet" \
+            --query 'Subnets[0].VpcId' \
+            --output text 2>/dev/null)
+
+        if [ -z "$vpc_id" ] || [ "$vpc_id" == "None" ]; then
+            echo "Error: Could not determine VPC ID from subnet $first_subnet"
+            exit 1
+        fi
+        echo "Discovered VPC ID from subnets: $vpc_id"
     fi
 
     echo "Creating stack: $stack_name"
