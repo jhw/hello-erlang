@@ -234,9 +234,7 @@ update_stack() {
         --template-body "file://$TEMPLATE_FILE" \
         --parameters \
             "ParameterKey=Environment,UsePreviousValue=true" \
-            "ParameterKey=KeyName,UsePreviousValue=true" \
             "ParameterKey=InstanceType,UsePreviousValue=true" \
-            "ParameterKey=SSHLocation,UsePreviousValue=true" \
             "ParameterKey=VpcId,UsePreviousValue=true" \
             "ParameterKey=ALBSubnets,UsePreviousValue=true" \
         --capabilities CAPABILITY_NAMED_IAM
