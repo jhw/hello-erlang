@@ -297,12 +297,6 @@ Outputs:
     Export:
       Name: !Sub '${Environment}-hello-erlang-sg-id'
 
-  ApplicationURL:
-    Description: Application URL (direct EC2 access)
-    Value: !Sub 'http://${ElasticIP}:8080/echo?message=Hello'
-    Export:
-      Name: !Sub '${Environment}-hello-erlang-url'
-
   LoadBalancerDNS:
     Description: Load Balancer DNS name
     Value: !GetAtt ApplicationLoadBalancer.DNSName
@@ -310,7 +304,7 @@ Outputs:
       Name: !Sub '${Environment}-hello-erlang-alb-dns'
 
   LoadBalancerURL:
-    Description: Load Balancer URL (recommended)
+    Description: Application URL (via Load Balancer)
     Value: !Sub 'http://${ApplicationLoadBalancer.DNSName}/echo?message=Hello'
     Export:
       Name: !Sub '${Environment}-hello-erlang-alb-url'
