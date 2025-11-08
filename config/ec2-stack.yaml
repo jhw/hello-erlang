@@ -279,9 +279,14 @@ Resources:
           # Update system
           yum update -y
 
-          # Install minimal runtime dependencies for Erlang ERTS
-          # Note: We don't compile Erlang here - releases are built in CodeBuild
-          yum install -y ncurses-libs openssl-libs unixODBC aws-cli
+          # Install runtime dependencies for Erlang ERTS
+          # These match the build environment in CodeBuild to ensure compatibility
+          # - ncurses-libs: Terminal I/O support
+          # - openssl-libs: Crypto and SSL applications
+          # - unixODBC: Database connectivity support
+          # - zlib: Compression support
+          # - aws-cli: For downloading releases from S3
+          yum install -y ncurses-libs openssl-libs unixODBC zlib aws-cli
 
           # Create deployment directory
           mkdir -p /opt/hello_erlang
