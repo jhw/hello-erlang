@@ -15,13 +15,10 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hello_erlang}"
 RELEASE_NAME="hello_erlang"
 
 usage() {
-    echo "Usage: $0 {build|rollback|deployment-status|ping|list-builds|list-artifacts|logs} <environment> [options]"
+    echo "Usage: $0 {build|rollback|deployment-status|ping} <environment> [options]"
     echo ""
     echo "Build Commands:"
     echo "  build <env>                     - Build release in CodeBuild (auto-deploys via CodeDeploy)"
-    echo "  list-builds <env>               - List recent CodeBuild builds"
-    echo "  list-artifacts <env>            - List available releases in S3"
-    echo "  logs <env> <build-id>           - Show logs for a CodeBuild build"
     echo ""
     echo "Deployment Commands:"
     echo "  rollback <env> <build-id>       - Deploy a specific previous build"
@@ -31,17 +28,19 @@ usage() {
     echo "Environments: dev, staging, prod"
     echo ""
     echo "Deployment workflow:"
-    echo "  1. $0 build dev                 # Build in CodeBuild → S3 → Auto-deploy via CodeDeploy"
-    echo "  2. $0 deployment-status dev     # Check deployment status"
-    echo "  3. $0 ping dev                  # Verify application is responding"
+    echo "  1. $0 build dev                    # Build in CodeBuild → S3 → Auto-deploy via CodeDeploy"
+    echo "  2. $0 deployment-status dev        # Check deployment status"
+    echo "  3. $0 ping dev                     # Verify application is responding"
     echo ""
     echo "Rollback workflow:"
-    echo "  1. $0 list-artifacts dev        # Find previous build-id"
-    echo "  2. $0 rollback dev abc123       # Deploy previous build"
+    echo "  1. ./scripts/aws-debug.sh list-artifacts dev  # Find previous build-id"
+    echo "  2. $0 rollback dev abc123                     # Deploy previous build"
     echo ""
-    echo "Other examples:"
-    echo "  $0 logs dev abc123              # View build logs"
-    echo "  $0 list-builds dev              # See recent builds"
+    echo "Debugging (use aws-debug.sh):"
+    echo "  ./scripts/aws-debug.sh list-builds dev        # List recent builds"
+    echo "  ./scripts/aws-debug.sh logs dev abc123        # View build logs"
+    echo "  ./scripts/aws-debug.sh list-artifacts dev     # List available artifacts"
+    echo "  ./scripts/aws-debug.sh list-deployments dev   # List recent deployments"
     echo ""
     echo "NOTE: Deployments now happen automatically via AWS CodeDeploy."
     echo "      The 'deploy', 'start', 'stop', 'status' commands have been removed."
@@ -440,110 +439,6 @@ cmd_ping() {
     fi
 }
 
-cmd_list_builds() {
-    local env=$1
-
-    local codebuild_project=$(get_stack_output "$env" "CodeBuildProjectName")
-
-    if [ -z "$codebuild_project" ]; then
-        echo "Error: Could not get CodeBuild project name from stack outputs"
-        exit 1
-    fi
-
-    echo "Recent CodeBuild builds for: $codebuild_project"
-    echo ""
-
-    # Get list of builds for this project
-    local build_ids=$(aws codebuild list-builds-for-project \
-        --project-name "$codebuild_project" \
-        --sort-order DESCENDING \
-        --max-items 20 \
-        --query 'ids' \
-        --output text)
-
-    if [ -z "$build_ids" ]; then
-        echo "No builds found."
-        return
-    fi
-
-    # Get details for these builds
-    aws codebuild batch-get-builds \
-        --ids $build_ids \
-        --query 'builds[*].[id,buildStatus,startTime,endTime]' \
-        --output table
-}
-
-cmd_list_artifacts() {
-    local env=$1
-
-    local artifact_bucket=$(get_stack_output "$env" "ArtifactBucketName")
-
-    if [ -z "$artifact_bucket" ]; then
-        echo "Error: Could not get artifact bucket name from stack outputs"
-        exit 1
-    fi
-
-    echo "Available releases in S3: s3://${artifact_bucket}/releases/"
-    echo ""
-
-    # List all release artifacts
-    local artifacts=$(aws s3 ls "s3://${artifact_bucket}/releases/" --recursive | grep "\.tar\.gz$")
-
-    if [ -z "$artifacts" ]; then
-        echo "No release artifacts found."
-        echo ""
-        echo "Run: $0 build $env"
-        return
-    fi
-
-    echo "$artifacts" | while read -r date time size path; do
-        local build_id=$(echo "$path" | sed 's|releases/\([^/]*\)/.*|\1|')
-        local filename=$(basename "$path")
-        printf "%-20s  %-10s  %s  %s\n" "$date $time" "$size" "$build_id" "$filename"
-    done
-}
-
-cmd_logs() {
-    local env=$1
-    local build_id=$2
-
-    if [ -z "$build_id" ]; then
-        echo "Error: build-id required"
-        echo "Usage: $0 logs <env> <build-id>"
-        echo ""
-        echo "Get build-id from: $0 list-builds $env"
-        exit 1
-    fi
-
-    local codebuild_project=$(get_stack_output "$env" "CodeBuildProjectName")
-
-    if [ -z "$codebuild_project" ]; then
-        echo "Error: Could not get CodeBuild project name from stack outputs"
-        exit 1
-    fi
-
-    echo "Fetching logs for build: $build_id"
-    echo "---"
-    echo ""
-
-    local log_group="/aws/codebuild/${codebuild_project}"
-    local log_stream="${build_id#*:}"
-
-    # Fetch all log events
-    aws logs get-log-events \
-        --log-group-name "$log_group" \
-        --log-stream-name "$log_stream" \
-        --start-from-head \
-        --output json 2>/dev/null | jq -r '.events[]?.message' 2>/dev/null
-
-    if [ $? -ne 0 ]; then
-        echo "Error: Could not fetch logs for build $build_id"
-        echo ""
-        echo "Verify build-id with: $0 list-builds $env"
-        exit 1
-    fi
-}
-
 # Main command router
 if [ -z "$1" ] || [ -z "$2" ]; then
     usage
@@ -563,20 +458,12 @@ case "$COMMAND" in
     deployment-status)
         cmd_deployment_status "$ENV" "$@"
         ;;
-    list-builds)
-        cmd_list_builds "$ENV" "$@"
-        ;;
-    list-artifacts)
-        cmd_list_artifacts "$ENV" "$@"
-        ;;
-    logs)
-        cmd_logs "$ENV" "$@"
-        ;;
     ping)
         cmd_ping "$ENV" "$@"
         ;;
     *)
         echo "Error: Unknown command '$COMMAND'"
+        echo ""
         usage
         ;;
 esac

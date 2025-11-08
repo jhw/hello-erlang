@@ -148,10 +148,11 @@ These commands required SSH access and manual intervention:
 
 ```bash
 # Still available
-./scripts/aws-deploy.sh ping dev          # Test via ALB
-./scripts/aws-deploy.sh list-builds dev   # List CodeBuild builds
-./scripts/aws-deploy.sh list-artifacts dev # List S3 artifacts
-./scripts/aws-deploy.sh logs dev <build-id> # View build logs
+./scripts/aws-deploy.sh ping dev                   # Test via ALB
+./scripts/aws-debug.sh list-builds dev             # List CodeBuild builds
+./scripts/aws-debug.sh list-artifacts dev          # List S3 artifacts
+./scripts/aws-debug.sh logs dev <build-id>         # View build logs
+./scripts/aws-debug.sh list-deployments dev        # List CodeDeploy deployments
 ```
 
 ## Deployment Workflow
@@ -188,7 +189,7 @@ These commands required SSH access and manual intervention:
 
 ```bash
 # 1. List available builds
-./scripts/aws-deploy.sh list-artifacts dev
+./scripts/aws-debug.sh list-artifacts dev
 
 # Output shows builds with timestamps
 
@@ -345,7 +346,7 @@ tail -f ./log/*.log
 
 ```bash
 # 1. Verify artifact exists
-./scripts/aws-deploy.sh list-artifacts dev
+./scripts/aws-debug.sh list-artifacts dev
 
 # 2. Manually trigger deployment via AWS CLI
 aws deploy create-deployment \
