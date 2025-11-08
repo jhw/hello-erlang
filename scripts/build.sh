@@ -16,9 +16,9 @@ case "$1" in
         echo "Release built: _build/default/rel/hello_erlang"
         ;;
     tar)
-        echo "Building release tarball..."
-        rebar3 tar
-        TARBALL=$(find _build/default/rel -name "*.tar.gz" | head -1)
+        echo "Building release tarball with ERTS (prod mode)..."
+        rebar3 as prod tar
+        TARBALL=$(find _build/prod/rel -name "*.tar.gz" | head -1)
         if [ -z "$TARBALL" ]; then
             echo "Error: Tarball not found"
             exit 1

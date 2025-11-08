@@ -98,7 +98,7 @@ get_key_file() {
 }
 
 check_tarball_exists() {
-    local tarball=$(find _build/default/rel -name "*.tar.gz" 2>/dev/null | head -1)
+    local tarball=$(find _build/prod/rel -name "*.tar.gz" 2>/dev/null | head -1)
     if [ -z "$tarball" ]; then
         return 1
     fi
@@ -106,7 +106,7 @@ check_tarball_exists() {
 }
 
 get_tarball_path() {
-    local tarball=$(find _build/default/rel -name "*.tar.gz" 2>/dev/null | head -1)
+    local tarball=$(find _build/prod/rel -name "*.tar.gz" 2>/dev/null | head -1)
     echo "$tarball"
 }
 
@@ -139,8 +139,8 @@ check_app_extracted() {
 cmd_build() {
     local env=$1
 
-    echo "Building release tarball..."
-    rebar3 tar
+    echo "Building release tarball with ERTS (prod mode)..."
+    rebar3 as prod tar
 
     local tarball=$(get_tarball_path)
     if [ -z "$tarball" ]; then
@@ -192,14 +192,41 @@ cmd_upload() {
     fi
 
     local tarball=$(get_tarball_path)
+    local tarball_name=$(basename "$tarball")
     local instance_ip=$(get_instance_ip "$env") || exit 1
     key_file=$(get_key_file "$env" "$key_file") || exit 1
 
+    # Safety check: is app currently running?
+    if check_app_extracted "$instance_ip" "$key_file"; then
+        echo "Checking if application is running..."
+        if ssh -i "$key_file" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=5 \
+            "ec2-user@${instance_ip}" \
+            "cd ${DEPLOY_DIR} && ./bin/${RELEASE_NAME} pid > /dev/null 2>&1"; then
+
+            echo ""
+            echo "Error: Application is currently running"
+            echo "Please stop the application before uploading:"
+            echo "  $0 stop $env"
+            exit 1
+        fi
+    fi
+
     echo "Uploading tarball to $instance_ip..."
-    echo "  Tarball: $(basename $tarball)"
+    echo "  Tarball: $tarball_name"
     echo "  Key: $key_file"
     echo ""
 
+    # Remove old tarball if it exists
+    ssh -i "$key_file" \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        "ec2-user@${instance_ip}" \
+        "rm -f ${DEPLOY_DIR}/${tarball_name}" 2>/dev/null || true
+
+    # Upload new tarball
     scp -i "$key_file" \
         -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null \
