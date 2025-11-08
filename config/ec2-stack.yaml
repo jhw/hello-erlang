@@ -173,7 +173,8 @@ Resources:
           # Update system
           yum update -y
 
-          # Install dependencies
+          # Install build tools and dependencies
+          yum groupinstall -y "Development Tools"
           yum install -y wget tar gzip git ncurses-devel openssl-devel
 
           # Install Erlang/OTP 27 (latest stable)
