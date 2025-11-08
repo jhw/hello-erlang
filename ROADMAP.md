@@ -1,8 +1,9 @@
 ### short
 
+- python scripts
 - logging >>> chatops
 - state >>> dynamodb
-- telemetry
+- telemetry >>> alarms?
 - python
 
 ### medium
