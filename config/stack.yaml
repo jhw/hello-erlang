@@ -32,6 +32,11 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
     Description: Latest Amazon Linux 2023 AMI ID from SSM Parameter Store
 
+  ErlangVersion:
+    Type: String
+    Default: '27.1'
+    Description: Erlang/OTP version to use for building releases (e.g., 27.1, 26.2.5)
+
 Resources:
   # ALB Security Group
   ALBSecurityGroup:
@@ -184,6 +189,8 @@ Resources:
             Value: !Ref Environment
           - Name: ARTIFACT_BUCKET
             Value: !Ref ArtifactBucket
+          - Name: ERLANG_VERSION
+            Value: !Ref ErlangVersion
       Source:
         Type: NO_SOURCE
         BuildSpec: config/buildspec.yml

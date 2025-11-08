@@ -30,6 +30,7 @@ usage() {
     echo ""
     echo "Options for deploy:"
     echo "  --instance-type <type>    - EC2 instance type (default: t3.micro)"
+    echo "  --erlang-version <ver>    - Erlang/OTP version (default: 27.1)"
     echo "  --subnets <subnet-ids>    - Comma-separated subnet IDs for ALB (optional, auto-discovers)"
     echo ""
     echo "Auto-discovery:"
@@ -96,8 +97,9 @@ create_stack() {
     shift
     local stack_name=$(get_stack_name $env)
 
-    # Apply defaults from config/aws.sh if set, otherwise use hardcoded defaults
+    # Apply defaults from config/env.sh if set, otherwise use hardcoded defaults
     local instance_type="${DEFAULT_INSTANCE_TYPE:-t3.micro}"
+    local erlang_version="${DEFAULT_ERLANG_VERSION:-27.1}"
     local subnets="${DEFAULT_ALB_SUBNETS:-}"
     local vpc_id="${DEFAULT_VPC_ID:-}"
 
@@ -106,6 +108,10 @@ create_stack() {
         case $1 in
             --instance-type)
                 instance_type="$2"
+                shift 2
+                ;;
+            --erlang-version)
+                erlang_version="$2"
                 shift 2
                 ;;
             --subnets)
@@ -149,6 +155,7 @@ create_stack() {
     echo "Creating stack: $stack_name"
     echo "  Environment: $env"
     echo "  Instance Type: $instance_type"
+    echo "  Erlang Version: $erlang_version"
     echo "  VPC ID: $vpc_id"
     echo "  ALB Subnets: $subnets"
     echo "  SSH Access: Disabled (use SSM Session Manager for emergency access)"
@@ -158,6 +165,7 @@ create_stack() {
     local params=(
         "ParameterKey=Environment,ParameterValue=$env"
         "ParameterKey=InstanceType,ParameterValue=$instance_type"
+        "ParameterKey=ErlangVersion,ParameterValue=$erlang_version"
         "ParameterKey=VpcId,ParameterValue=$vpc_id"
         "ParameterKey=ALBSubnets,ParameterValue=\"$subnets\""
     )
@@ -235,6 +243,7 @@ update_stack() {
         --parameters \
             "ParameterKey=Environment,UsePreviousValue=true" \
             "ParameterKey=InstanceType,UsePreviousValue=true" \
+            "ParameterKey=ErlangVersion,UsePreviousValue=true" \
             "ParameterKey=VpcId,UsePreviousValue=true" \
             "ParameterKey=ALBSubnets,UsePreviousValue=true" \
         --capabilities CAPABILITY_NAMED_IAM
