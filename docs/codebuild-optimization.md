@@ -411,21 +411,48 @@ No additional changes needed when adding CodePipeline.
 - ✅ Better CI/CD experience
 - ✅ Reduced AWS resource consumption
 
-## Implementation Checklist
+## Implementation Status
 
-- [ ] Create `config/aws/Dockerfile.erlang-build`
-- [ ] Create `scripts/build-erlang-image.sh`
-- [ ] Make script executable
-- [ ] Build and push initial image to ECR
-- [ ] Add `CodeBuildImage` parameter to stack.yaml
-- [ ] Update CodeBuild project to use parameter
-- [ ] Add ECR permissions to CodeBuildRole
-- [ ] Simplify buildspec.yml install phase
-- [ ] Update stack with new parameter value
-- [ ] Test build with custom image
-- [ ] Document ECR image URI in team wiki
-- [ ] Set up ECR lifecycle policy (optional)
-- [ ] Update this document with actual ECR URI
+✅ **COMPLETED** - Implemented on 2025-11-09
+
+### What Was Done
+- ✅ Built Erlang 27.1 image in separate `erlang-image-builder` project
+- ✅ Pushed to ECR: `119552584133.dkr.ecr.eu-west-1.amazonaws.com/erlang-codebuild:27.1`
+- ✅ Updated `stack.yaml` to use parameterized ECR image
+- ✅ Added ECR permissions to CodeBuildRole
+- ✅ Simplified `buildspec.yml` install phase (removed kerl)
+- ✅ Added ECR repository policy for CodeBuild access
+- ✅ Deployed and tested - build time reduced to ~22 seconds
+
+### ECR Repository Policy Required
+
+**Important**: The ECR repository needs a resource-based policy to allow CodeBuild to pull images:
+
+```bash
+aws ecr set-repository-policy \
+  --repository-name erlang-codebuild \
+  --region eu-west-1 \
+  --policy-text '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Sid": "AllowCodeBuildPull",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "codebuild.amazonaws.com"
+      },
+      "Action": [
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+        "ecr:BatchCheckLayerAvailability"
+      ]
+    }]
+  }'
+```
+
+### Results
+- **Before**: ~5 minutes per build
+- **After**: ~22 seconds per build
+- **Improvement**: 13.6x faster (93% reduction)
 
 ## Questions?
 
