@@ -186,12 +186,7 @@ Resources:
       Description: Build Erlang release for Hello Erlang application
       ServiceRole: !GetAtt CodeBuildRole.Arn
       Artifacts:
-        Type: S3
-        Location: !Ref ArtifactBucket
-        Name: !Sub '${Environment}-hello-erlang'
-        Path: releases
-        NamespaceType: BUILD_ID
-        Packaging: NONE
+        Type: CODEPIPELINE
       Environment:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_LARGE
