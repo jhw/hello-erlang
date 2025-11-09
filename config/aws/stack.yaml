@@ -205,7 +205,7 @@ Resources:
             Value: !Ref ErlangVersion
       Source:
         Type: CODEPIPELINE
-        BuildSpec: buildspec.yml
+        BuildSpec: config/aws/buildspec.yml
       TimeoutInMinutes: 30
       Tags:
         - Key: Name
