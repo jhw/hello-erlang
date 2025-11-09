@@ -37,6 +37,19 @@ Parameters:
     Default: '27.1'
     Description: Erlang/OTP version to use for building releases (e.g., 27.1, 26.2.5)
 
+  GitHubOwner:
+    Type: String
+    Description: GitHub repository owner (organization or username)
+
+  GitHubRepo:
+    Type: String
+    Default: hello-erlang
+    Description: GitHub repository name
+
+  GitHubBranch:
+    Type: String
+    Description: Branch to monitor (e.g., deploy/dev, deploy/staging, deploy/prod)
+
 Resources:
   # ALB Security Group
   ALBSecurityGroup:
@@ -191,8 +204,7 @@ Resources:
           - Name: ERLANG_VERSION
             Value: !Ref ErlangVersion
       Source:
-        Type: S3
-        Location: !Sub '${ArtifactBucket}/sources/placeholder.zip'
+        Type: CODEPIPELINE
         BuildSpec: buildspec.yml
       TimeoutInMinutes: 30
       Tags:
@@ -649,6 +661,175 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt S3EventRule.Arn
 
+  # ===================================
+  # CodePipeline Resources
+  # ===================================
+
+  # GitHub Connection (OAuth-based via CodeStar Connections)
+  GitHubConnection:
+    Type: AWS::CodeStarConnections::Connection
+    Properties:
+      ConnectionName: !Sub '${Environment}-hello-erlang-github'
+      ProviderType: GitHub
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # IAM Role for CodePipeline
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-hello-erlang-pipeline-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: PipelinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # S3 artifacts
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub '${ArtifactBucket.Arn}/*'
+              # CodeBuild
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: !GetAtt CodeBuildProject.Arn
+              # CodeStar Connections (for GitHub access)
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref GitHubConnection
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # CloudWatch Log Group for Pipeline events
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/codepipeline/${Environment}-hello-erlang-pipeline'
+      RetentionInDays: 14
+
+  # CloudWatch Log Group for Pipeline EventBridge events
+  PipelineEventsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/events/codepipeline/${Environment}-hello-erlang'
+      RetentionInDays: 7
+
+  # CodePipeline
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub '${Environment}-hello-erlang-pipeline'
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        # Source Stage - Pull from GitHub
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: 1
+              Configuration:
+                ConnectionArn: !Ref GitHubConnection
+                FullRepositoryId: !Sub '${GitHubOwner}/${GitHubRepo}'
+                BranchName: !Ref GitHubBranch
+                OutputArtifactFormat: CODE_ZIP
+              OutputArtifacts:
+                - Name: SourceOutput
+
+        # Build Stage - Use existing CodeBuild project
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-hello-erlang-pipeline'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # EventBridge Rule to capture pipeline events
+  PipelineEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${Environment}-hello-erlang-pipeline-events'
+      Description: Capture CodePipeline execution events for logging
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.codepipeline
+        detail-type:
+          - CodePipeline Pipeline Execution State Change
+          - CodePipeline Stage Execution State Change
+          - CodePipeline Action Execution State Change
+        detail:
+          pipeline:
+            - !Ref CodePipeline
+      Targets:
+        - Arn: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${PipelineEventsLogGroup}'
+          Id: CloudWatchLogTarget
+
+  # IAM Policy for EventBridge to write to CloudWatch Logs
+  PipelineEventLogPolicy:
+    Type: AWS::Logs::ResourcePolicy
+    Properties:
+      PolicyName: !Sub '${Environment}-hello-erlang-pipeline-log-policy'
+      PolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": ["events.amazonaws.com", "delivery.logs.amazonaws.com"]
+              },
+              "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+              ],
+              "Resource": "${PipelineEventsLogGroup.Arn}"
+            }
+          ]
+        }
+
 Outputs:
   InstanceId:
     Description: EC2 Instance ID
@@ -719,3 +900,23 @@ Outputs:
     Value: !Ref CodeDeployTriggerLambda
     Export:
       Name: !Sub '${Environment}-hello-erlang-lambda-trigger'
+
+  GitHubConnectionArn:
+    Description: CodeStar Connection ARN for GitHub (complete OAuth in console if PENDING)
+    Value: !Ref GitHubConnection
+    Export:
+      Name: !Sub '${Environment}-hello-erlang-github-connection'
+
+  GitHubConnectionStatus:
+    Description: Check connection status - must be AVAILABLE for pipeline to work
+    Value: !Sub 'aws codestar-connections get-connection --connection-arn ${GitHubConnection}'
+
+  PipelineName:
+    Description: CodePipeline name
+    Value: !Ref CodePipeline
+    Export:
+      Name: !Sub '${Environment}-hello-erlang-pipeline-name'
+
+  PipelineUrl:
+    Description: Direct link to pipeline in AWS Console
+    Value: !Sub 'https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${CodePipeline}/view'
