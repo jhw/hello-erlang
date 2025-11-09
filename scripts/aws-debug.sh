@@ -13,18 +13,18 @@ fi
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {list-builds|list-artifacts|logs|list-deployments|deployment-logs|instance-logs|list-stacks|ping} <environment> [options]"
+    echo "Usage: $0 {list-builds|build-logs|list-artifacts|list-deployments|deploy-logs|instance-logs|list-stacks|ping} <environment> [options]"
     echo ""
     echo "CodeBuild Commands:"
     echo "  list-builds <env>               - List recent CodeBuild builds"
-    echo "  logs <env> <build-id>           - Show logs for a CodeBuild build"
+    echo "  build-logs <env> <build-id>     - Show logs for a CodeBuild build"
     echo ""
     echo "S3 Commands:"
     echo "  list-artifacts <env>            - List available releases in S3"
     echo ""
     echo "CodeDeploy Commands:"
     echo "  list-deployments <env>          - List recent CodeDeploy deployments"
-    echo "  deployment-logs <env> <dep-id>  - Show detailed deployment events"
+    echo "  deploy-logs <env> <dep-id>      - Show detailed deployment events"
     echo ""
     echo "EC2 Commands:"
     echo "  instance-logs <env>             - Show EC2 UserData execution logs (via SSM)"
@@ -39,9 +39,10 @@ usage() {
     echo ""
     echo "Examples:"
     echo "  $0 list-builds dev              # See recent builds"
-    echo "  $0 logs dev abc123              # View build logs"
+    echo "  $0 build-logs dev abc123        # View build logs"
     echo "  $0 list-artifacts dev           # Find previous build-id for rollback"
     echo "  $0 list-deployments dev         # See recent deployments"
+    echo "  $0 deploy-logs dev d-ABC123     # View deployment details"
     echo "  $0 instance-logs dev            # Check UserData execution"
     echo "  $0 list-stacks                  # View all CloudFormation stacks"
     echo "  $0 ping dev                     # Test application endpoint"
@@ -417,13 +418,13 @@ case "$COMMAND" in
     list-artifacts)
         cmd_list_artifacts "$ENV"
         ;;
-    logs)
+    build-logs)
         cmd_logs "$ENV" "$@"
         ;;
     list-deployments)
         cmd_list_deployments "$ENV"
         ;;
-    deployment-logs)
+    deploy-logs)
         cmd_deployment_logs "$ENV" "$@"
         ;;
     instance-logs)
