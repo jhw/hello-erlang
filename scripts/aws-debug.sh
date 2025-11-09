@@ -13,7 +13,7 @@ fi
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {list-builds|build-logs|list-artifacts|list-deployments|deploy-logs|instance-logs|list-stacks|ping} <environment> [options]"
+    echo "Usage: $0 {list-builds|build-logs|list-artifacts|list-deployments|deploy-logs|instance-logs|list-stacks} <environment> [options]"
     echo ""
     echo "CodeBuild Commands:"
     echo "  list-builds <env>               - List recent CodeBuild builds"
@@ -32,9 +32,6 @@ usage() {
     echo "CloudFormation Commands:"
     echo "  list-stacks                     - List all CloudFormation stacks"
     echo ""
-    echo "Application Commands:"
-    echo "  ping <env> [message]            - Test application endpoint via ALB (default: 'ping')"
-    echo ""
     echo "Environments: dev, staging, prod"
     echo ""
     echo "Examples:"
@@ -45,7 +42,6 @@ usage() {
     echo "  $0 deploy-logs dev d-ABC123     # View deployment details"
     echo "  $0 instance-logs dev            # Check UserData execution"
     echo "  $0 list-stacks                  # View all CloudFormation stacks"
-    echo "  $0 ping dev                     # Test application endpoint"
     exit 1
 }
 
@@ -340,56 +336,6 @@ cmd_list_stacks() {
         --output table
 }
 
-cmd_ping() {
-    local env=$1
-    local message="${2:-ping}"
-
-    # Get ALB DNS name from stack outputs
-    local alb_dns=$(get_stack_output "$env" "LoadBalancerDNS")
-    if [ -z "$alb_dns" ]; then
-        echo "Error: Could not get Load Balancer DNS for environment '$env'" >&2
-        exit 1
-    fi
-
-    # URL encode the message
-    local encoded_message=$(printf %s "$message" | jq -sRr @uri)
-
-    local url="http://${alb_dns}/echo?message=${encoded_message}"
-
-    echo "Testing application endpoint..."
-    echo "  URL: $url"
-    echo ""
-
-    if ! command -v curl &> /dev/null; then
-        echo "Error: curl not found. Please install curl."
-        exit 1
-    fi
-
-    local response=$(curl -s -w "\n%{http_code}" --connect-timeout 5 --max-time 10 "$url" 2>/dev/null)
-    local http_code=$(echo "$response" | tail -n 1)
-    local body=$(echo "$response" | sed '$d')
-
-    if [ "$http_code" == "200" ] && [ "$body" == "$message" ]; then
-        echo "✓ Application is responding"
-        echo "  Status: 200 OK"
-        echo "  Response: $body"
-    elif [ "$http_code" == "200" ]; then
-        echo "⚠ Application responded but with unexpected content"
-        echo "  Status: 200 OK"
-        echo "  Response: $body"
-        echo "  Expected: $message"
-    elif [ -n "$http_code" ]; then
-        echo "✗ Application returned error"
-        echo "  Status: $http_code"
-        echo "  Response: $body"
-        exit 1
-    else
-        echo "✗ Application not responding"
-        echo "  Could not connect to $url"
-        exit 1
-    fi
-}
-
 # Main command router
 if [ -z "$1" ]; then
     usage
@@ -429,9 +375,6 @@ case "$COMMAND" in
         ;;
     instance-logs)
         cmd_instance_logs "$ENV"
-        ;;
-    ping)
-        cmd_ping "$ENV" "$@"
         ;;
     *)
         echo "Error: Unknown command '$COMMAND'"
