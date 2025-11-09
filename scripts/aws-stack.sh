@@ -295,12 +295,11 @@ show_resources() {
 }
 
 list_stacks() {
-    echo "Hello Erlang CloudFormation Stacks:"
+    echo "CloudFormation Stacks:"
     echo ""
 
     aws cloudformation list-stacks \
-        --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE \
-        --query "StackSummaries[?starts_with(StackName, '${STACK_PREFIX}')].[StackName,StackStatus,CreationTime]" \
+        --query 'StackSummaries[*].[StackName,StackStatus,CreationTime]' \
         --output table
 }
 
