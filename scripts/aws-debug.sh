@@ -13,7 +13,7 @@ fi
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {list-builds|list-artifacts|logs|list-deployments|deployment-logs|instance-logs|stack-events|list-stacks|empty-bucket|ping} <environment> [options]"
+    echo "Usage: $0 {list-builds|list-artifacts|logs|list-deployments|deployment-logs|instance-logs|stack-events|list-stacks|ping} <environment> [options]"
     echo ""
     echo "CodeBuild Commands:"
     echo "  list-builds <env>               - List recent CodeBuild builds"
@@ -33,9 +33,6 @@ usage() {
     echo "  stack-events <env> [max-items]  - Show CloudFormation stack events (default: 50)"
     echo "  list-stacks                     - List all CloudFormation stacks"
     echo ""
-    echo "S3 Maintenance Commands:"
-    echo "  empty-bucket <env>              - Manually empty bucket (for stuck DELETE_FAILED stacks)"
-    echo ""
     echo "Application Commands:"
     echo "  ping <env> [message]            - Test application endpoint via ALB (default: 'ping')"
     echo ""
@@ -49,7 +46,6 @@ usage() {
     echo "  $0 instance-logs dev            # Check UserData execution"
     echo "  $0 stack-events dev 100         # View stack events"
     echo "  $0 list-stacks                  # View all CloudFormation stacks"
-    echo "  $0 empty-bucket dev             # Manually empty bucket (for DELETE_FAILED)"
     echo "  $0 ping dev                     # Test application endpoint"
     exit 1
 }
@@ -405,77 +401,6 @@ cmd_list_stacks() {
         --output table
 }
 
-cmd_empty_bucket() {
-    local env=$1
-    local bucket_name="${env}-hello-erlang-artifacts-$(aws sts get-caller-identity --query Account --output text)"
-
-    echo "Note: The 'delete' command now automatically empties buckets."
-    echo "This manual command is only needed for stuck DELETE_FAILED stacks."
-    echo ""
-    echo "Emptying S3 bucket: $bucket_name"
-    echo "This will delete all objects and versions from the bucket."
-    echo ""
-    read -p "Are you sure? (yes/no): " confirm
-
-    if [ "$confirm" != "yes" ]; then
-        echo "Operation cancelled"
-        exit 0
-    fi
-
-    echo ""
-    echo "Checking if bucket exists..."
-    if ! aws s3api head-bucket --bucket "$bucket_name" 2>/dev/null; then
-        echo "✓ Bucket does not exist (already deleted or never created)"
-        exit 0
-    fi
-
-    echo "✓ Bucket exists"
-    echo ""
-    echo "Deleting all object versions..."
-
-    # Delete all versions and delete markers
-    aws s3api list-object-versions \
-        --bucket "$bucket_name" \
-        --output json \
-        --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' | \
-    jq -c '.Objects[]?' | \
-    while read -r obj; do
-        if [ -n "$obj" ]; then
-            key=$(echo "$obj" | jq -r '.Key')
-            version=$(echo "$obj" | jq -r '.VersionId')
-            echo "  Deleting: $key (version: $version)"
-            aws s3api delete-object \
-                --bucket "$bucket_name" \
-                --key "$key" \
-                --version-id "$version" >/dev/null
-        fi
-    done
-
-    # Delete all delete markers
-    aws s3api list-object-versions \
-        --bucket "$bucket_name" \
-        --output json \
-        --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' | \
-    jq -c '.Objects[]?' | \
-    while read -r obj; do
-        if [ -n "$obj" ]; then
-            key=$(echo "$obj" | jq -r '.Key')
-            version=$(echo "$obj" | jq -r '.VersionId')
-            echo "  Deleting marker: $key (version: $version)"
-            aws s3api delete-object \
-                --bucket "$bucket_name" \
-                --key "$key" \
-                --version-id "$version" >/dev/null
-        fi
-    done
-
-    echo ""
-    echo "✓ Bucket emptied successfully"
-    echo ""
-    echo "You can now retry stack deletion:"
-    echo "  ./scripts/aws-stack.sh delete $env"
-}
-
 cmd_ping() {
     local env=$1
     local message="${2:-ping}"
@@ -568,9 +493,6 @@ case "$COMMAND" in
         ;;
     stack-events)
         cmd_stack_events "$ENV" "$@"
-        ;;
-    empty-bucket)
-        cmd_empty_bucket "$ENV"
         ;;
     ping)
         cmd_ping "$ENV" "$@"
