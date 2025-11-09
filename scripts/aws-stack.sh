@@ -14,7 +14,7 @@ TEMPLATE_FILE="config/aws/stack.yaml"
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {deploy|delete|update|status|outputs|resources|events} <environment> [options]"
+    echo "Usage: $0 {deploy|delete|update|status|outputs|resources|events|ping} <environment> [options]"
     echo ""
     echo "Commands:"
     echo "  deploy <env>              - Deploy/create a new stack"
@@ -24,6 +24,7 @@ usage() {
     echo "  outputs <env>             - Show stack outputs"
     echo "  resources <env>           - Show stack resources"
     echo "  events <env> [max-items]  - Show stack events (default: 50, useful for debugging)"
+    echo "  ping <env> [message]      - Test application endpoint via ALB (default: 'ping')"
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
@@ -31,10 +32,23 @@ usage() {
     echo "  --instance-type <type>    - EC2 instance type (default: t3.micro)"
     echo "  --erlang-version <ver>    - Erlang/OTP version (default: 27.1)"
     echo "  --subnets <subnet-ids>    - Comma-separated subnet IDs for ALB (optional, auto-discovers)"
+    echo "  --github-owner <owner>    - GitHub repository owner (required, or set GITHUB_OWNER in env.sh)"
+    echo "  --github-repo <repo>      - GitHub repository name (default: hello-erlang)"
+    echo "  --github-branch <branch>  - GitHub branch to monitor (default: deploy/<env>)"
+    echo ""
+    echo "Options for update:"
+    echo "  --github-owner <owner>    - Update GitHub repository owner"
+    echo "  --github-repo <repo>      - Update GitHub repository name"
+    echo "  --github-branch <branch>  - Update GitHub branch"
     echo ""
     echo "Auto-discovery:"
     echo "  - Subnets: Uses default VPC subnets (at least 2 in different AZs)"
     echo "  - Set DEFAULT_* variables in config/env.sh to override"
+    echo ""
+    echo "GitHub Configuration:"
+    echo "  - Set GITHUB_OWNER, GITHUB_REPO, and branch variables in config/env.sh"
+    echo "  - After stack creation, complete CodeStar Connection OAuth in AWS Console"
+    echo "  - See stack outputs for connection status and activation instructions"
     echo ""
     echo "Note: SSH access is not configured. Use AWS SSM Session Manager for emergency access:"
     echo "  aws ssm start-session --target <instance-id>"
@@ -102,6 +116,24 @@ create_stack() {
     local subnets="${DEFAULT_ALB_SUBNETS:-}"
     local vpc_id="${DEFAULT_VPC_ID:-}"
 
+    # GitHub configuration from env.sh
+    local github_owner="${GITHUB_OWNER:-}"
+    local github_repo="${GITHUB_REPO:-hello-erlang}"
+    local github_branch=""
+
+    # Select branch based on environment
+    case "$env" in
+        dev)
+            github_branch="${DEV_BRANCH:-deploy/dev}"
+            ;;
+        staging)
+            github_branch="${STAGING_BRANCH:-deploy/staging}"
+            ;;
+        prod)
+            github_branch="${PROD_BRANCH:-deploy/prod}"
+            ;;
+    esac
+
     # Parse command-line options (these override defaults)
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -117,12 +149,31 @@ create_stack() {
                 subnets="$2"
                 shift 2
                 ;;
+            --github-owner)
+                github_owner="$2"
+                shift 2
+                ;;
+            --github-repo)
+                github_repo="$2"
+                shift 2
+                ;;
+            --github-branch)
+                github_branch="$2"
+                shift 2
+                ;;
             *)
                 echo "Unknown option: $1"
                 usage
                 ;;
         esac
     done
+
+    # Validate GitHub configuration
+    if [ -z "$github_owner" ]; then
+        echo "Error: GITHUB_OWNER not set"
+        echo "Please set GITHUB_OWNER in config/env.sh or pass --github-owner"
+        exit 1
+    fi
 
     # Auto-discover VPC and subnets if not provided
     if [ -z "$subnets" ]; then
@@ -157,6 +208,9 @@ create_stack() {
     echo "  Erlang Version: $erlang_version"
     echo "  VPC ID: $vpc_id"
     echo "  ALB Subnets: $subnets"
+    echo "  GitHub Owner: $github_owner"
+    echo "  GitHub Repo: $github_repo"
+    echo "  GitHub Branch: $github_branch"
     echo "  SSH Access: Disabled (use SSM Session Manager for emergency access)"
     echo ""
 
@@ -167,6 +221,9 @@ create_stack() {
         "ParameterKey=ErlangVersion,ParameterValue=$erlang_version"
         "ParameterKey=VpcId,ParameterValue=$vpc_id"
         "ParameterKey=ALBSubnets,ParameterValue=\"$subnets\""
+        "ParameterKey=GitHubOwner,ParameterValue=$github_owner"
+        "ParameterKey=GitHubRepo,ParameterValue=$github_repo"
+        "ParameterKey=GitHubBranch,ParameterValue=$github_branch"
     )
 
     aws cloudformation create-stack \
@@ -299,17 +356,57 @@ update_stack() {
     echo "Updating stack: $stack_name"
     echo ""
 
-    # For simplicity, use existing parameters
-    # Could be enhanced to accept parameter overrides
+    # Parse command-line parameter overrides
+    local param_overrides=()
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --github-owner)
+                param_overrides+=("ParameterKey=GitHubOwner,ParameterValue=$2")
+                shift 2
+                ;;
+            --github-repo)
+                param_overrides+=("ParameterKey=GitHubRepo,ParameterValue=$2")
+                shift 2
+                ;;
+            --github-branch)
+                param_overrides+=("ParameterKey=GitHubBranch,ParameterValue=$2")
+                shift 2
+                ;;
+            *)
+                echo "Unknown option: $1"
+                echo "Supported update options: --github-owner, --github-repo, --github-branch"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Build parameters list (use previous values by default, override if specified)
+    local params=(
+        "ParameterKey=Environment,UsePreviousValue=true"
+        "ParameterKey=InstanceType,UsePreviousValue=true"
+        "ParameterKey=ErlangVersion,UsePreviousValue=true"
+        "ParameterKey=VpcId,UsePreviousValue=true"
+        "ParameterKey=ALBSubnets,UsePreviousValue=true"
+        "ParameterKey=GitHubOwner,UsePreviousValue=true"
+        "ParameterKey=GitHubRepo,UsePreviousValue=true"
+        "ParameterKey=GitHubBranch,UsePreviousValue=true"
+    )
+
+    # Replace with overrides if provided
+    if [ ${#param_overrides[@]} -gt 0 ]; then
+        for override in "${param_overrides[@]}"; do
+            local key=$(echo "$override" | cut -d',' -f1 | cut -d'=' -f2)
+            # Remove the default entry for this key
+            params=("${params[@]/ParameterKey=$key,UsePreviousValue=true/}")
+            # Add the override
+            params+=("$override")
+        done
+    fi
+
     aws cloudformation update-stack \
         --stack-name "$stack_name" \
         --template-body "file://$TEMPLATE_FILE" \
-        --parameters \
-            "ParameterKey=Environment,UsePreviousValue=true" \
-            "ParameterKey=InstanceType,UsePreviousValue=true" \
-            "ParameterKey=ErlangVersion,UsePreviousValue=true" \
-            "ParameterKey=VpcId,UsePreviousValue=true" \
-            "ParameterKey=ALBSubnets,UsePreviousValue=true" \
+        --parameters "${params[@]}" \
         --capabilities CAPABILITY_NAMED_IAM
 
     echo ""
@@ -419,6 +516,61 @@ show_events() {
     echo "To see more events: $0 events $env 100"
 }
 
+ping_app() {
+    local env=$1
+    local message="${2:-ping}"
+    local stack_name=$(get_stack_name $env)
+
+    # Get ALB DNS name from stack outputs
+    local alb_dns=$(aws cloudformation describe-stacks \
+        --stack-name "$stack_name" \
+        --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
+        --output text 2>/dev/null)
+
+    if [ -z "$alb_dns" ]; then
+        echo "Error: Could not get Load Balancer DNS for environment '$env'" >&2
+        exit 1
+    fi
+
+    # URL encode the message
+    local encoded_message=$(printf %s "$message" | jq -sRr @uri)
+    local url="http://${alb_dns}/echo?message=${encoded_message}"
+
+    echo "Testing application endpoint..."
+    echo "  Environment: $env"
+    echo "  URL: $url"
+    echo ""
+
+    if ! command -v curl &> /dev/null; then
+        echo "Error: curl not found. Please install curl."
+        exit 1
+    fi
+
+    local response=$(curl -s -w "\n%{http_code}" --connect-timeout 5 --max-time 10 "$url" 2>/dev/null)
+    local http_code=$(echo "$response" | tail -n 1)
+    local body=$(echo "$response" | sed '$d')
+
+    if [ "$http_code" == "200" ] && [ "$body" == "$message" ]; then
+        echo "✓ Application is responding"
+        echo "  Status: 200 OK"
+        echo "  Response: $body"
+    elif [ "$http_code" == "200" ]; then
+        echo "⚠ Application responded but with unexpected content"
+        echo "  Status: 200 OK"
+        echo "  Response: $body"
+        echo "  Expected: $message"
+    elif [ -n "$http_code" ]; then
+        echo "✗ Application returned error"
+        echo "  Status: $http_code"
+        echo "  Response: $body"
+        exit 1
+    else
+        echo "✗ Application not responding"
+        echo "  Could not connect to $url"
+        exit 1
+    fi
+}
+
 # Main command router
 case "$1" in
     deploy)
@@ -469,6 +621,13 @@ case "$1" in
             usage
         fi
         show_events "$2" "$3"
+        ;;
+    ping)
+        if [ -z "$2" ]; then
+            echo "Error: Environment required"
+            usage
+        fi
+        ping_app "$2" "$3"
         ;;
     *)
         usage

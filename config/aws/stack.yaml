@@ -37,6 +37,19 @@ Parameters:
     Default: '27.1'
     Description: Erlang/OTP version to use for building releases (e.g., 27.1, 26.2.5)
 
+  GitHubOwner:
+    Type: String
+    Description: GitHub repository owner (organization or username)
+
+  GitHubRepo:
+    Type: String
+    Default: hello-erlang
+    Description: GitHub repository name
+
+  GitHubBranch:
+    Type: String
+    Description: Branch to monitor (e.g., deploy/dev, deploy/staging, deploy/prod)
+
 Resources:
   # ALB Security Group
   ALBSecurityGroup:
@@ -173,12 +186,7 @@ Resources:
       Description: Build Erlang release for Hello Erlang application
       ServiceRole: !GetAtt CodeBuildRole.Arn
       Artifacts:
-        Type: S3
-        Location: !Ref ArtifactBucket
-        Name: !Sub '${Environment}-hello-erlang'
-        Path: releases
-        NamespaceType: BUILD_ID
-        Packaging: NONE
+        Type: CODEPIPELINE
       Environment:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_LARGE
@@ -191,9 +199,8 @@ Resources:
           - Name: ERLANG_VERSION
             Value: !Ref ErlangVersion
       Source:
-        Type: S3
-        Location: !Sub '${ArtifactBucket}/sources/placeholder.zip'
-        BuildSpec: buildspec.yml
+        Type: CODEPIPELINE
+        BuildSpec: config/aws/buildspec.yml
       TimeoutInMinutes: 30
       Tags:
         - Key: Name
@@ -228,6 +235,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:GetObject
+                  - s3:GetObjectVersion
                   - s3:ListBucket
                 Resource:
                   - !GetAtt ArtifactBucket.Arn
@@ -495,159 +503,199 @@ Resources:
         - Key: Application
           Value: hello-erlang
 
-  # Lambda Execution Role (for CodeDeploy trigger)
-  LambdaExecutionRole:
+  # ===================================
+  # CodePipeline Resources
+  # ===================================
+
+  # GitHub Connection (OAuth-based via CodeStar Connections)
+  GitHubConnection:
+    Type: AWS::CodeStarConnections::Connection
+    Properties:
+      ConnectionName: !Sub '${Environment}-hello-erlang-github'
+      ProviderType: GitHub
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # IAM Role for CodePipeline
+  CodePipelineServiceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-hello-erlang-lambda-role'
+      RoleName: !Sub '${Environment}-hello-erlang-pipeline-role'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
-              Service: lambda.amazonaws.com
+              Service: codepipeline.amazonaws.com
             Action: 'sts:AssumeRole'
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: CodeDeployTrigger
+        - PolicyName: PipelinePolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
-                Action:
-                  - codedeploy:CreateDeployment
-                  - codedeploy:GetDeploymentConfig
-                  - codedeploy:GetApplicationRevision
-                  - codedeploy:RegisterApplicationRevision
-                Resource: '*'
+              # S3 artifacts
               - Effect: Allow
                 Action:
                   - s3:GetObject
+                  - s3:PutObject
                   - s3:GetObjectVersion
-                Resource: !Sub '${ArtifactBucket.Arn}/*'
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub '${ArtifactBucket.Arn}/*'
+              # CodeBuild
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: !GetAtt CodeBuildProject.Arn
+              # CodeDeploy
+              - Effect: Allow
+                Action:
+                  - codedeploy:CreateDeployment
+                  - codedeploy:GetDeployment
+                  - codedeploy:GetDeploymentConfig
+                  - codedeploy:GetApplicationRevision
+                  - codedeploy:RegisterApplicationRevision
+                Resource:
+                  - !Sub 'arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:*'
+              # CodeStar Connections (for GitHub access)
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref GitHubConnection
       Tags:
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
           Value: hello-erlang
 
-  # Lambda Function (CodeDeploy trigger)
-  CodeDeployTriggerLambda:
-    Type: AWS::Lambda::Function
+  # CloudWatch Log Group for Pipeline events
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
     Properties:
-      FunctionName: !Sub '${Environment}-hello-erlang-deploy-trigger'
-      Runtime: python3.11
-      Handler: index.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Timeout: 60
-      Environment:
-        Variables:
-          CODEDEPLOY_APP: !Ref CodeDeployApplication
-          DEPLOYMENT_GROUP: !Ref CodeDeployDeploymentGroup
-          S3_BUCKET: !Ref ArtifactBucket
-      Code:
-        ZipFile: |
-          import boto3
-          import os
-          import json
+      LogGroupName: !Sub '/aws/codepipeline/${Environment}-hello-erlang-pipeline'
+      RetentionInDays: 14
 
-          codedeploy = boto3.client('codedeploy')
+  # CloudWatch Log Group for Pipeline EventBridge events
+  PipelineEventsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/events/codepipeline/${Environment}-hello-erlang'
+      RetentionInDays: 7
 
-          def handler(event, context):
-              print(f"Received event: {json.dumps(event)}")
+  # CodePipeline
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub '${Environment}-hello-erlang-pipeline'
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        # Source Stage - Pull from GitHub
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: 1
+              Configuration:
+                ConnectionArn: !Ref GitHubConnection
+                FullRepositoryId: !Sub '${GitHubOwner}/${GitHubRepo}'
+                BranchName: !Ref GitHubBranch
+                OutputArtifactFormat: CODE_ZIP
+              OutputArtifacts:
+                - Name: SourceOutput
 
-              # Parse EventBridge event (from S3 via EventBridge)
-              # EventBridge event format: detail.bucket.name and detail.object.key
-              bucket = event['detail']['bucket']['name']
-              key = event['detail']['object']['key']
+        # Build Stage - Use existing CodeBuild project
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
 
-              print(f"S3 object: s3://{bucket}/{key}")
-
-              # Only process .tar.gz files in releases/ (EventBridge rule should filter, but double-check)
-              if not key.startswith('releases/') or not key.endswith('.tar.gz'):
-                  print(f"Ignoring non-release artifact: {key}")
-                  return {'statusCode': 200, 'body': 'Ignored non-release artifact'}
-
-              # Extract build-id from key: releases/<build-id>/file.tar.gz
-              parts = key.split('/')
-              if len(parts) < 2:
-                  print(f"Invalid key format: {key}")
-                  return {'statusCode': 400, 'body': 'Invalid key format'}
-
-              build_id = parts[1]
-              print(f"Build ID: {build_id}")
-
-              # Create deployment
-              try:
-                  response = codedeploy.create_deployment(
-                      applicationName=os.environ['CODEDEPLOY_APP'],
-                      deploymentGroupName=os.environ['DEPLOYMENT_GROUP'],
-                      revision={
-                          'revisionType': 'S3',
-                          's3Location': {
-                              'bucket': bucket,
-                              'key': key,
-                              'bundleType': 'tgz'
-                          }
-                      },
-                      deploymentConfigName='CodeDeployDefault.AllAtOnce',
-                      description=f'Automated deployment from CodeBuild: {build_id}'
-                  )
-
-                  deployment_id = response['deploymentId']
-                  print(f"Deployment created: {deployment_id}")
-
-                  return {
-                      'statusCode': 200,
-                      'body': json.dumps({
-                          'deploymentId': deployment_id,
-                          'buildId': build_id
-                      })
-                  }
-              except Exception as e:
-                  print(f"Error creating deployment: {str(e)}")
-                  raise
+        # Deploy Stage - Use existing CodeDeploy application
+        - Name: Deploy
+          Actions:
+            - Name: DeployAction
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeploy
+                Version: 1
+              Configuration:
+                ApplicationName: !Ref CodeDeployApplication
+                DeploymentGroupName: !Ref CodeDeployDeploymentGroup
+              InputArtifacts:
+                - Name: BuildOutput
       Tags:
         - Key: Name
-          Value: !Sub '${Environment}-hello-erlang-deploy-trigger'
+          Value: !Sub '${Environment}-hello-erlang-pipeline'
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
           Value: hello-erlang
 
-  # EventBridge Rule to trigger Lambda on S3 events
-  S3EventRule:
+  # EventBridge Rule to capture pipeline events
+  PipelineEventRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: !Sub '${Environment}-hello-erlang-s3-release-trigger'
-      Description: Trigger CodeDeploy when new release artifact is uploaded to S3
+      Name: !Sub '${Environment}-hello-erlang-pipeline-events'
+      Description: Capture CodePipeline execution events for logging
       State: ENABLED
       EventPattern:
         source:
-          - aws.s3
+          - aws.codepipeline
         detail-type:
-          - Object Created
+          - CodePipeline Pipeline Execution State Change
+          - CodePipeline Stage Execution State Change
+          - CodePipeline Action Execution State Change
         detail:
-          bucket:
-            name:
-              - !Ref ArtifactBucket
-          object:
-            key:
-              - prefix: releases/
-              - suffix: .tar.gz
+          pipeline:
+            - !Ref CodePipeline
       Targets:
-        - Arn: !GetAtt CodeDeployTriggerLambda.Arn
-          Id: CodeDeployTriggerTarget
+        - Arn: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${PipelineEventsLogGroup}'
+          Id: CloudWatchLogTarget
 
-  # Lambda Permission for EventBridge to invoke
-  EventBridgeLambdaPermission:
-    Type: AWS::Lambda::Permission
+  # IAM Policy for EventBridge to write to CloudWatch Logs
+  PipelineEventLogPolicy:
+    Type: AWS::Logs::ResourcePolicy
     Properties:
-      FunctionName: !Ref CodeDeployTriggerLambda
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt S3EventRule.Arn
+      PolicyName: !Sub '${Environment}-hello-erlang-pipeline-log-policy'
+      PolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": ["events.amazonaws.com", "delivery.logs.amazonaws.com"]
+              },
+              "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+              ],
+              "Resource": "${PipelineEventsLogGroup.Arn}"
+            }
+          ]
+        }
 
 Outputs:
   InstanceId:
@@ -714,8 +762,22 @@ Outputs:
     Export:
       Name: !Sub '${Environment}-hello-erlang-deployment-group'
 
-  LambdaFunctionName:
-    Description: Lambda function name for CodeDeploy trigger
-    Value: !Ref CodeDeployTriggerLambda
+  GitHubConnectionArn:
+    Description: CodeStar Connection ARN for GitHub (complete OAuth in console if PENDING)
+    Value: !Ref GitHubConnection
     Export:
-      Name: !Sub '${Environment}-hello-erlang-lambda-trigger'
+      Name: !Sub '${Environment}-hello-erlang-github-connection'
+
+  GitHubConnectionStatus:
+    Description: Check connection status - must be AVAILABLE for pipeline to work
+    Value: !Sub 'aws codestar-connections get-connection --connection-arn ${GitHubConnection}'
+
+  PipelineName:
+    Description: CodePipeline name
+    Value: !Ref CodePipeline
+    Export:
+      Name: !Sub '${Environment}-hello-erlang-pipeline-name'
+
+  PipelineUrl:
+    Description: Direct link to pipeline in AWS Console
+    Value: !Sub 'https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${CodePipeline}/view'

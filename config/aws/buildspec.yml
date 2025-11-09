@@ -42,21 +42,18 @@ phases:
       - echo "Extracting Erlang release..."
       - tar -xzf "$TARBALL" -C bundle/
       - echo "Adding CodeDeploy files..."
-      - cp config/aws/appspec.yml bundle/appspec.yml
+      - cp config/aws/appspec.yml bundle/
       - mkdir -p bundle/scripts
       - cp config/aws/codedeploy/*.sh bundle/scripts/
-      - echo "Creating final deployment bundle..."
-      - cd bundle && tar -czf ../hello_erlang.tar.gz . && cd ..
-      - echo "Deployment bundle created"
-      - ls -lh hello_erlang.tar.gz
-      - echo "Deployment bundle contents:"
-      - tar -tzf hello_erlang.tar.gz | head -20
+      - echo "Deployment bundle structure:"
+      - ls -la bundle/
+      - echo "Scripts:"
+      - ls -la bundle/scripts/
 
 artifacts:
   files:
-    - 'hello_erlang.tar.gz'
-  name: release-$(date +%Y%m%d-%H%M%S)
-  discard-paths: yes
+    - '**/*'
+  base-directory: bundle
 
 cache:
   paths:
