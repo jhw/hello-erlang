@@ -151,6 +151,14 @@ Resources:
                 Resource:
                   - !GetAtt ArtifactBucket.Arn
                   - !Sub '${ArtifactBucket.Arn}/*'
+              # ECR access for custom build images
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: '*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -174,7 +182,7 @@ Resources:
       Environment:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_LARGE
-        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/erlang-codebuild:27.1'
         EnvironmentVariables:
           - Name: ENVIRONMENT
             Value: !Ref Environment

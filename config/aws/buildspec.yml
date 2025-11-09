@@ -8,30 +8,11 @@ phases:
     runtime-versions:
       python: 3.11
     commands:
-      - echo "Installing Erlang/OTP and rebar3 using kerl..."
-      - yum install -y wget tar gzip git ncurses-devel openssl-devel
-
-      # Install kerl (curl is already available in CodeBuild)
-      - curl -O https://raw.githubusercontent.com/kerl/kerl/master/kerl
-      - chmod +x kerl
-      - mv kerl /usr/local/bin/
-
-      # Configure kerl (minimal options for reliable build)
-      - export KERL_CONFIGURE_OPTIONS="--disable-debug --without-javac --without-wx --without-odbc"
-      - export KERL_BUILD_DOCS=no
-
-      # Install Erlang/OTP (version from environment variable or default to 27.1)
-      - export ERLANG_VERSION=${ERLANG_VERSION:-27.1}
-      - echo "Installing Erlang/OTP ${ERLANG_VERSION} using kerl..."
-      - kerl build ${ERLANG_VERSION} ${ERLANG_VERSION}
-      - kerl install ${ERLANG_VERSION} /usr/local/erlang
+      - echo "Activating pre-installed Erlang/OTP..."
       - source /usr/local/erlang/activate
       - export PATH=/usr/local/erlang/bin:$PATH
-
-      # Install rebar3
-      - wget https://s3.amazonaws.com/rebar3/rebar3
-      - chmod +x rebar3
-      - mv rebar3 /usr/local/bin/
+      - erl -version
+      - rebar3 version
 
   pre_build:
     commands:
