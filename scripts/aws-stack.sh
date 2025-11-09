@@ -299,7 +299,7 @@ list_stacks() {
     echo ""
 
     aws cloudformation list-stacks \
-        --query 'StackSummaries[*].[StackName,StackStatus,CreationTime]' \
+        --query 'StackSummaries[?StackStatus!=`DELETE_COMPLETE`].[StackName,StackStatus,CreationTime]' \
         --output table
 }
 
