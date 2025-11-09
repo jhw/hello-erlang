@@ -34,7 +34,7 @@ usage() {
     echo "  list-stacks                     - List all CloudFormation stacks"
     echo ""
     echo "S3 Maintenance Commands:"
-    echo "  empty-bucket <env>              - Empty artifact bucket (including all versions)"
+    echo "  empty-bucket <env>              - Manually empty bucket (for stuck DELETE_FAILED stacks)"
     echo ""
     echo "Application Commands:"
     echo "  ping <env> [message]            - Test application endpoint via ALB (default: 'ping')"
@@ -49,7 +49,7 @@ usage() {
     echo "  $0 instance-logs dev            # Check UserData execution"
     echo "  $0 stack-events dev 100         # View stack events"
     echo "  $0 list-stacks                  # View all CloudFormation stacks"
-    echo "  $0 empty-bucket dev             # Empty S3 bucket to allow stack deletion"
+    echo "  $0 empty-bucket dev             # Manually empty bucket (for DELETE_FAILED)"
     echo "  $0 ping dev                     # Test application endpoint"
     exit 1
 }
@@ -409,6 +409,9 @@ cmd_empty_bucket() {
     local env=$1
     local bucket_name="${env}-hello-erlang-artifacts-$(aws sts get-caller-identity --query Account --output text)"
 
+    echo "Note: The 'delete' command now automatically empties buckets."
+    echo "This manual command is only needed for stuck DELETE_FAILED stacks."
+    echo ""
     echo "Emptying S3 bucket: $bucket_name"
     echo "This will delete all objects and versions from the bucket."
     echo ""
@@ -469,7 +472,7 @@ cmd_empty_bucket() {
     echo ""
     echo "✓ Bucket emptied successfully"
     echo ""
-    echo "You can now delete the stack:"
+    echo "You can now retry stack deletion:"
     echo "  ./scripts/aws-stack.sh delete $env"
 }
 

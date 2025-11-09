@@ -192,6 +192,63 @@ create_stack() {
     show_outputs "$env"
 }
 
+empty_artifact_bucket() {
+    local env=$1
+    local bucket_name="${env}-hello-erlang-artifacts-$(aws sts get-caller-identity --query Account --output text)"
+
+    echo "Checking artifact bucket: $bucket_name"
+
+    # Check if bucket exists
+    if ! aws s3api head-bucket --bucket "$bucket_name" 2>/dev/null; then
+        echo "  ✓ Bucket does not exist (already deleted or never created)"
+        return 0
+    fi
+
+    echo "  ✓ Bucket exists, emptying..."
+
+    # Delete all versions
+    local versions=$(aws s3api list-object-versions \
+        --bucket "$bucket_name" \
+        --output json \
+        --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' 2>/dev/null)
+
+    if [ "$versions" != "null" ] && [ -n "$versions" ]; then
+        echo "$versions" | jq -c '.Objects[]?' 2>/dev/null | while read -r obj; do
+            if [ -n "$obj" ]; then
+                key=$(echo "$obj" | jq -r '.Key')
+                version=$(echo "$obj" | jq -r '.VersionId')
+                echo "    Deleting: $key (version: $version)"
+                aws s3api delete-object \
+                    --bucket "$bucket_name" \
+                    --key "$key" \
+                    --version-id "$version" >/dev/null 2>&1
+            fi
+        done
+    fi
+
+    # Delete all delete markers
+    local markers=$(aws s3api list-object-versions \
+        --bucket "$bucket_name" \
+        --output json \
+        --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' 2>/dev/null)
+
+    if [ "$markers" != "null" ] && [ -n "$markers" ]; then
+        echo "$markers" | jq -c '.Objects[]?' 2>/dev/null | while read -r obj; do
+            if [ -n "$obj" ]; then
+                key=$(echo "$obj" | jq -r '.Key')
+                version=$(echo "$obj" | jq -r '.VersionId')
+                echo "    Deleting marker: $key (version: $version)"
+                aws s3api delete-object \
+                    --bucket "$bucket_name" \
+                    --key "$key" \
+                    --version-id "$version" >/dev/null 2>&1
+            fi
+        done
+    fi
+
+    echo "  ✓ Bucket emptied"
+}
+
 delete_stack() {
     local env=$1
     local stack_name=$(get_stack_name $env)
@@ -205,11 +262,19 @@ delete_stack() {
         exit 0
     fi
 
+    echo ""
+    echo "Preparing stack for deletion..."
+
+    # Empty S3 bucket before attempting deletion
+    empty_artifact_bucket "$env"
+
+    echo ""
+    echo "Initiating stack deletion..."
     aws cloudformation delete-stack \
         --stack-name "$stack_name"
 
     echo ""
-    echo "Stack deletion initiated. Waiting for completion..."
+    echo "Waiting for deletion to complete..."
     echo ""
 
     aws cloudformation wait stack-delete-complete \
