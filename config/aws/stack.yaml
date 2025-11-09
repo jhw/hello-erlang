@@ -563,6 +563,7 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:application/${CodeDeployApplication}'
                   - !Sub 'arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:${CodeDeployApplication}/${CodeDeployDeploymentGroup}'
+                  - !Sub 'arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentconfig:*'
               # CodeStar Connections (for GitHub access)
               - Effect: Allow
                 Action:
