@@ -561,9 +561,7 @@ Resources:
                   - codedeploy:GetApplicationRevision
                   - codedeploy:RegisterApplicationRevision
                 Resource:
-                  - !Sub 'arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:application/${CodeDeployApplication}'
-                  - !Sub 'arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:${CodeDeployApplication}/${CodeDeployDeploymentGroup}'
-                  - !Sub 'arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentconfig:*'
+                  - !Sub 'arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:*'
               # CodeStar Connections (for GitHub access)
               - Effect: Allow
                 Action:
