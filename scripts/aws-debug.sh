@@ -13,7 +13,7 @@ fi
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {list-builds|list-artifacts|logs|list-deployments|deployment-logs|instance-logs|stack-events|list-stacks|ping} <environment> [options]"
+    echo "Usage: $0 {list-builds|list-artifacts|logs|list-deployments|deployment-logs|instance-logs|list-stacks|ping} <environment> [options]"
     echo ""
     echo "CodeBuild Commands:"
     echo "  list-builds <env>               - List recent CodeBuild builds"
@@ -30,7 +30,6 @@ usage() {
     echo "  instance-logs <env>             - Show EC2 UserData execution logs (via SSM)"
     echo ""
     echo "CloudFormation Commands:"
-    echo "  stack-events <env> [max-items]  - Show CloudFormation stack events (default: 50)"
     echo "  list-stacks                     - List all CloudFormation stacks"
     echo ""
     echo "Application Commands:"
@@ -44,7 +43,6 @@ usage() {
     echo "  $0 list-artifacts dev           # Find previous build-id for rollback"
     echo "  $0 list-deployments dev         # See recent deployments"
     echo "  $0 instance-logs dev            # Check UserData execution"
-    echo "  $0 stack-events dev 100         # View stack events"
     echo "  $0 list-stacks                  # View all CloudFormation stacks"
     echo "  $0 ping dev                     # Test application endpoint"
     exit 1
@@ -332,66 +330,6 @@ cmd_instance_logs() {
     rm -f /tmp/ssm-command-id*.txt
 }
 
-cmd_stack_events() {
-    local env=$1
-    local max_items=${2:-50}
-    local stack_name=$(get_stack_name $env)
-
-    echo "CloudFormation events for: $stack_name"
-    echo "Showing last $max_items events"
-    echo ""
-
-    # Get events with full details including ResourceStatusReason
-    aws cloudformation describe-stack-events \
-        --stack-name "$stack_name" \
-        --max-items "$max_items" \
-        --output json | jq -r '
-        .StackEvents[] |
-        [
-            .Timestamp,
-            .ResourceStatus,
-            .ResourceType,
-            .LogicalResourceId,
-            (.ResourceStatusReason // "")
-        ] |
-        @tsv
-    ' | while IFS=$'\t' read -r timestamp status type resource reason; do
-        # Color code based on status
-        case "$status" in
-            *FAILED*|*ROLLBACK*)
-                color="\033[31m"  # Red
-                ;;
-            *COMPLETE*)
-                color="\033[32m"  # Green
-                ;;
-            *IN_PROGRESS*)
-                color="\033[33m"  # Yellow
-                ;;
-            *)
-                color="\033[0m"   # Default
-                ;;
-        esac
-
-        reset="\033[0m"
-
-        # Format output
-        printf "${color}%-25s %-20s %-35s %s${reset}\n" "$timestamp" "$status" "$resource" "$type"
-
-        # Show reason on next line if present and it's a failure
-        if [ -n "$reason" ] && [[ "$status" == *"FAILED"* ]]; then
-            printf "  ${color}└─ Reason: %s${reset}\n" "$reason"
-        fi
-    done
-
-    echo ""
-    echo "Legend:"
-    echo -e "  \033[32m■\033[0m Success (COMPLETE)"
-    echo -e "  \033[33m■\033[0m In Progress"
-    echo -e "  \033[31m■\033[0m Failed or Rollback"
-    echo ""
-    echo "To see more events: $0 stack-events $env 100"
-}
-
 cmd_list_stacks() {
     echo "CloudFormation Stacks:"
     echo ""
@@ -490,9 +428,6 @@ case "$COMMAND" in
         ;;
     instance-logs)
         cmd_instance_logs "$ENV"
-        ;;
-    stack-events)
-        cmd_stack_events "$ENV" "$@"
         ;;
     ping)
         cmd_ping "$ENV" "$@"

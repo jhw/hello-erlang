@@ -14,7 +14,7 @@ TEMPLATE_FILE="config/aws/stack.yaml"
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {deploy|delete|update|status|outputs|resources} <environment> [options]"
+    echo "Usage: $0 {deploy|delete|update|status|outputs|resources|events} <environment> [options]"
     echo ""
     echo "Commands:"
     echo "  deploy <env>              - Deploy/create a new stack"
@@ -23,6 +23,7 @@ usage() {
     echo "  status <env>              - Show stack status"
     echo "  outputs <env>             - Show stack outputs"
     echo "  resources <env>           - Show stack resources"
+    echo "  events <env> [max-items]  - Show stack events (default: 50, useful for debugging)"
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
@@ -358,6 +359,66 @@ show_resources() {
         --output table
 }
 
+show_events() {
+    local env=$1
+    local max_items=${2:-50}
+    local stack_name=$(get_stack_name $env)
+
+    echo "CloudFormation events for: $stack_name"
+    echo "Showing last $max_items events"
+    echo ""
+
+    # Get events with full details including ResourceStatusReason
+    aws cloudformation describe-stack-events \
+        --stack-name "$stack_name" \
+        --max-items "$max_items" \
+        --output json | jq -r '
+        .StackEvents[] |
+        [
+            .Timestamp,
+            .ResourceStatus,
+            .ResourceType,
+            .LogicalResourceId,
+            (.ResourceStatusReason // "")
+        ] |
+        @tsv
+    ' | while IFS=$'\t' read -r timestamp status type resource reason; do
+        # Color code based on status
+        case "$status" in
+            *FAILED*|*ROLLBACK*)
+                color="\033[31m"  # Red
+                ;;
+            *COMPLETE*)
+                color="\033[32m"  # Green
+                ;;
+            *IN_PROGRESS*)
+                color="\033[33m"  # Yellow
+                ;;
+            *)
+                color="\033[0m"   # Default
+                ;;
+        esac
+
+        reset="\033[0m"
+
+        # Format output
+        printf "${color}%-25s %-20s %-35s %s${reset}\n" "$timestamp" "$status" "$resource" "$type"
+
+        # Show reason on next line if present and it's a failure
+        if [ -n "$reason" ] && [[ "$status" == *"FAILED"* ]]; then
+            printf "  ${color}└─ Reason: %s${reset}\n" "$reason"
+        fi
+    done
+
+    echo ""
+    echo "Legend:"
+    echo -e "  \033[32m■\033[0m Success (COMPLETE)"
+    echo -e "  \033[33m■\033[0m In Progress"
+    echo -e "  \033[31m■\033[0m Failed or Rollback"
+    echo ""
+    echo "To see more events: $0 events $env 100"
+}
+
 # Main command router
 case "$1" in
     deploy)
@@ -401,6 +462,13 @@ case "$1" in
             usage
         fi
         show_resources "$2"
+        ;;
+    events)
+        if [ -z "$2" ]; then
+            echo "Error: Environment required"
+            usage
+        fi
+        show_events "$2" "$3"
         ;;
     *)
         usage
