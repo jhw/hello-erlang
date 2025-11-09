@@ -182,7 +182,7 @@ Resources:
       Environment:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_LARGE
-        Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/erlang-codebuild:27.1'
+        Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/erlang-codebuild:${ErlangVersion}'
         EnvironmentVariables:
           - Name: ENVIRONMENT
             Value: !Ref Environment
