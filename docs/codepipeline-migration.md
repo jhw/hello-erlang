@@ -72,6 +72,53 @@ git push origin deploy/staging:deploy/prod
 - ✅ **Audit trail**: Git history shows who deployed what, when
 - ✅ **No main branch pollution**: `main` stays clean, `deploy/*` are deployment triggers
 
+## GitHub Authentication Strategy
+
+### Recommended: AWS CodeStar Connections (OAuth-based)
+
+**This is the modern, secure best practice for connecting CodePipeline to GitHub.**
+
+#### Why CodeStar Connections?
+
+- ✅ **OAuth-based**: No static tokens to manage or rotate
+- ✅ **Never expires**: AWS manages credentials automatically
+- ✅ **Secure**: Scoped to specific repositories, not your entire GitHub account
+- ✅ **Native GitHub Apps**: Uses GitHub's recommended integration method
+- ✅ **Works with private repos**: Full support without security compromises
+- ✅ **CloudFormation native**: First-class AWS support
+- ✅ **Audit trail**: Visible in both AWS and GitHub admin consoles
+- ✅ **No maintenance**: Set it once, forget it
+
+#### How CodeStar Connections Work
+
+```
+1. Deploy CloudFormation stack
+   └─> Connection created in "PENDING" state
+
+2. Go to AWS Console → Developer Tools → Connections
+   └─> Click "Update pending connection"
+
+3. Complete GitHub OAuth flow (30 seconds)
+   └─> Authorize "AWS Connector for GitHub" app
+   └─> Select which repositories to grant access to
+
+4. Connection state changes to "AVAILABLE"
+   └─> CodePipeline can now access those repositories
+```
+
+### Alternative: Personal Access Tokens (NOT RECOMMENDED)
+
+**⚠️  Deprecated approach - only use for temporary testing**
+
+Personal Access Tokens (PATs) have significant drawbacks:
+- ❌ Expire after 90 days to 1 year (requires manual rotation)
+- ❌ Broad permissions (access to your entire GitHub account)
+- ❌ Static secrets that can leak
+- ❌ Deprecated by both AWS and GitHub
+- ❌ More complex setup (Secrets Manager + CloudFormation)
+
+If you must use PATs (e.g., for GitHub Enterprise Server on-premises), see the "Legacy Authentication Methods" section at the end of this document.
+
 ## Configuration in env.sh
 
 ### New Parameters
@@ -81,7 +128,6 @@ Add to `config/env.sh` (gitignored):
 # GitHub Repository Configuration (for CodePipeline)
 GITHUB_OWNER="your-org-or-username"
 GITHUB_REPO="hello-erlang"
-GITHUB_TOKEN_SECRET_NAME="github-personal-access-token"  # Stored in AWS Secrets Manager
 
 # Branch configuration per environment
 DEV_BRANCH="deploy/dev"
@@ -89,18 +135,7 @@ STAGING_BRANCH="deploy/staging"
 PROD_BRANCH="deploy/prod"
 ```
 
-### GitHub Token Setup
-```bash
-# One-time setup: Store GitHub personal access token in Secrets Manager
-aws secretsmanager create-secret \
-    --name github-personal-access-token \
-    --description "GitHub PAT for CodePipeline" \
-    --secret-string "ghp_your_token_here"
-```
-
-**Token Requirements**:
-- Scope: `repo` (full control of private repositories)
-- Or: `public_repo` (for public repositories only)
+**Note**: No GitHub token required when using CodeStar Connections!
 
 ## buildspec.yml, appspec.yml, and CodeDeploy Scripts
 
@@ -387,13 +422,25 @@ CodePipelineServiceRole:
               Resource:
                 - !Sub 'arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:application/${CodeDeployApplication}'
                 - !Sub 'arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:${CodeDeployApplication}/${CodeDeployDeploymentGroup}'
+            # CodeStar Connections (for GitHub access)
+            - Effect: Allow
+              Action:
+                - codestar-connections:UseConnection
+              Resource: !Ref GitHubConnection
 
-# 2. GitHub Connection (replaces personal access token - more secure)
+# 2. GitHub Connection (OAuth-based, recommended)
 GitHubConnection:
   Type: AWS::CodeStarConnections::Connection
   Properties:
     ConnectionName: !Sub '${Environment}-hello-erlang-github'
     ProviderType: GitHub
+    # Note: Connection will be created in PENDING state
+    # You must complete OAuth handshake in AWS Console (see Migration Steps)
+    Tags:
+      - Key: Environment
+        Value: !Ref Environment
+      - Key: Application
+        Value: hello-erlang
 
 # 3. CodePipeline
 CodePipeline:
@@ -495,6 +542,33 @@ Parameters:
     Description: Branch to monitor (e.g., deploy/dev, deploy/staging, deploy/prod)
 ```
 
+### Outputs to Add
+
+```yaml
+Outputs:
+  # ... existing outputs ...
+
+  GitHubConnectionArn:
+    Description: CodeStar Connection ARN for GitHub (complete OAuth in console)
+    Value: !Ref GitHubConnection
+    Export:
+      Name: !Sub '${AWS::StackName}-GitHubConnectionArn'
+
+  GitHubConnectionStatus:
+    Description: Check connection status - must be AVAILABLE for pipeline to work
+    Value: !Sub 'aws codestar-connections get-connection --connection-arn ${GitHubConnection}'
+
+  PipelineName:
+    Description: CodePipeline name
+    Value: !Ref CodePipeline
+    Export:
+      Name: !Sub '${AWS::StackName}-PipelineName'
+
+  PipelineUrl:
+    Description: Direct link to pipeline in AWS Console
+    Value: !Sub 'https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${CodePipeline}/view'
+```
+
 ### Resources to Remove
 
 ```yaml
@@ -566,7 +640,11 @@ Start with dev, then staging, then prod:
        GitHubBranch="deploy/dev"
    ```
 
-2. **Activate GitHub connection**
+2. **Activate GitHub connection (REQUIRED)**
+
+   After stack deployment, the CodeStar Connection is in **PENDING** state. You must complete the OAuth handshake:
+
+   **Step 2a: Check connection status**
    ```bash
    # Get connection ARN from stack outputs
    CONNECTION_ARN=$(aws cloudformation describe-stacks \
@@ -574,9 +652,55 @@ Start with dev, then staging, then prod:
        --query 'Stacks[0].Outputs[?OutputKey==`GitHubConnectionArn`].OutputValue' \
        --output text)
 
-   # Complete handshake in AWS Console
-   # Navigate to: CodePipeline > Settings > Connections
-   # Click "Update pending connection" and authorize GitHub app
+   # Check connection status (will show "PENDING")
+   aws codestar-connections get-connection --connection-arn "$CONNECTION_ARN"
+   ```
+
+   **Step 2b: Complete OAuth handshake in AWS Console**
+
+   1. Navigate to: **AWS Console > Developer Tools > Settings > Connections**
+      - Or direct link: https://console.aws.amazon.com/codesuite/settings/connections
+
+   2. You'll see your connection with status "Pending"
+
+   3. Click the connection name, then click **"Update pending connection"**
+
+   4. Click **"Install a new app"** (first time) or select existing installation
+
+   5. You'll be redirected to GitHub:
+      - **Authorize the "AWS Connector for GitHub" app**
+      - Select which repositories to grant access:
+        - Option 1: **"Only select repositories"** (recommended) → Choose `hello-erlang`
+        - Option 2: "All repositories" (grants access to everything)
+      - Click **"Save"**
+
+   6. You'll be redirected back to AWS Console
+
+   7. Click **"Connect"** to complete the handshake
+
+   8. Connection status changes to **"Available"** ✅
+
+   **Step 2c: Verify connection is active**
+   ```bash
+   # Check connection status (should now show "AVAILABLE")
+   aws codestar-connections get-connection --connection-arn "$CONNECTION_ARN"
+
+   # Expected output:
+   # {
+   #     "Connection": {
+   #         "ConnectionName": "dev-hello-erlang-github",
+   #         "ConnectionStatus": "AVAILABLE",
+   #         "ProviderType": "GitHub",
+   #         ...
+   #     }
+   # }
+   ```
+
+   **Important notes:**
+   - ⚠️  **Pipeline will NOT work** until connection status is "AVAILABLE"
+   - 🔒 For **private repositories**: Ensure you grant access to the specific repo
+   - 🏢 For **GitHub Organizations**: An org admin must approve the AWS Connector app
+   - ✅ This is a **one-time setup** per AWS account/region - subsequent pipelines can reuse the connection
    ```
 
 3. **Verify pipeline created**
@@ -800,7 +924,7 @@ aws codebuild start-build \
 ```
 
 ### Q: How do we handle secrets in the pipeline?
-**A**: Use AWS Secrets Manager (already set up for GitHub token). Add to CodeBuild environment variables.
+**A**: Use AWS Secrets Manager. Add to CodeBuild environment variables. (Note: GitHub authentication via CodeStar Connections requires no secrets - AWS handles it automatically!)
 
 ### Q: Can we add approval steps before prod?
 **A**: Yes! Add manual approval stage:
@@ -823,15 +947,145 @@ aws codebuild start-build \
 ### Q: What about multi-region deployments?
 **A**: Create separate pipelines per region, each watching the same deploy branch.
 
+## Troubleshooting GitHub Authentication
+
+### Connection Status: PENDING
+
+**Problem**: Pipeline fails with "Connection is not available"
+
+**Solution**: You haven't completed the OAuth handshake yet.
+```bash
+# Check connection status
+aws codestar-connections get-connection --connection-arn "$CONNECTION_ARN"
+
+# If status is "PENDING", go to AWS Console:
+# https://console.aws.amazon.com/codesuite/settings/connections
+# Complete the OAuth flow (see Phase 2, Step 2 above)
+```
+
+### Source Stage Fails: "Repository not found"
+
+**Problem**: Pipeline source stage fails with repository access error
+
+**Possible causes:**
+1. **GitHub app not installed on repository**
+   - Go to GitHub → Settings → Integrations → Applications
+   - Find "AWS Connector for GitHub"
+   - Edit repository access → Add the missing repository
+
+2. **Wrong repository name format**
+   - Must be: `owner/repo` (e.g., `my-org/hello-erlang`)
+   - NOT: `https://github.com/my-org/hello-erlang`
+
+3. **Private repository without access**
+   - The AWS Connector app must be granted access to private repos
+   - Check GitHub app settings
+
+### Organization Permission Denied
+
+**Problem**: "This organization has not approved the AWS Connector app"
+
+**Solution**:
+1. GitHub org admin must approve third-party app
+2. Go to: GitHub → Organization → Settings → Third-party access
+3. Find "AWS Connector for GitHub" → Grant access
+4. Retry connection setup in AWS
+
+### Connection Works But Pipeline Still Fails
+
+**Problem**: Connection status is "AVAILABLE" but source stage fails
+
+**Check these:**
+```bash
+# 1. Verify branch exists
+git ls-remote --heads origin deploy/dev
+
+# 2. Verify CloudFormation parameters
+aws cloudformation describe-stacks \
+    --stack-name hello-erlang-dev \
+    --query 'Stacks[0].Parameters[?ParameterKey==`GitHubBranch`]'
+
+# 3. Check pipeline IAM role has UseConnection permission
+aws iam get-role-policy \
+    --role-name dev-hello-erlang-pipeline-role \
+    --policy-name PipelinePolicy
+```
+
+## GitHub Authentication Methods Comparison
+
+| Feature | CodeStar Connections (OAuth) | Personal Access Token |
+|---------|----------------------------|----------------------|
+| **Setup complexity** | Medium (one-time OAuth) | Low (create token) |
+| **Security** | ✅ Excellent (OAuth, scoped) | ⚠️  Poor (static token) |
+| **Expiration** | ✅ Never | ❌ 90 days - 1 year |
+| **Maintenance** | ✅ None | ❌ Manual rotation |
+| **Private repos** | ✅ Yes | ✅ Yes |
+| **Org visibility** | ✅ Visible to admins | ❌ Hidden (personal token) |
+| **Revocation** | ✅ Instant (AWS or GitHub) | ⚠️  Must rotate everywhere |
+| **CloudFormation** | ✅ Native resource | ⚠️  Via Secrets Manager |
+| **AWS recommendation** | ✅ Preferred | ❌ Deprecated |
+| **GitHub recommendation** | ✅ GitHub Apps | ❌ Legacy |
+| **Audit trail** | ✅ AWS CloudTrail | ⚠️  Limited |
+| **Cost** | ✅ Free | ✅ Free |
+| **Best for** | **Production** | Testing only |
+
+**Recommendation**: Use CodeStar Connections for all production pipelines.
+
 ## Next Steps
 
 1. Review this document with team
 2. Decide on git branch naming convention
-3. Set up GitHub personal access token / CodeStar connection
+3. **Set up CodeStar Connections** (recommended - see Phase 2)
 4. Start with dev environment migration
 5. Run parallel (script + pipeline) for 1-2 weeks
 6. Cutover remaining environments
 7. Archive old deployment script
+
+## Legacy Authentication Methods
+
+### Personal Access Tokens (For Reference Only)
+
+**⚠️  This section is included only for completeness. Use CodeStar Connections instead.**
+
+If you absolutely must use PATs (e.g., GitHub Enterprise Server on-premises):
+
+**1. Create GitHub Personal Access Token**
+- GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
+- Generate new token (classic)
+- Scopes: `repo` (private) or `public_repo` (public only)
+- Expiration: Maximum allowed (but you'll need to rotate it)
+
+**2. Store in AWS Secrets Manager**
+```bash
+aws secretsmanager create-secret \
+    --name github-personal-access-token \
+    --description "GitHub PAT for CodePipeline (LEGACY)" \
+    --secret-string "ghp_your_token_here"
+```
+
+**3. Use in CloudFormation (OLD v1 Provider)**
+```yaml
+# NOT RECOMMENDED - Use CodeStarConnections instead
+SourceAction:
+  ActionTypeId:
+    Category: Source
+    Owner: ThirdParty
+    Provider: GitHub  # v1 provider (deprecated)
+    Version: 1
+  Configuration:
+    Owner: !Ref GitHubOwner
+    Repo: !Ref GitHubRepo
+    Branch: !Ref GitHubBranch
+    OAuthToken: !Sub '{{resolve:secretsmanager:github-personal-access-token:SecretString}}'
+  OutputArtifacts:
+    - Name: SourceOutput
+```
+
+**4. Set up rotation reminder**
+```bash
+# PATs expire - set a calendar reminder to rotate before expiration
+# This is why CodeStar Connections is better - no rotation needed
+```
 
 ## Related Documents
 - [CodeBuild Optimization Plan](./codebuild-optimization.md) - Reduce build time from 5min to 30sec
