@@ -13,7 +13,7 @@ fi
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {list-builds|list-artifacts|logs|list-deployments|deployment-logs|instance-logs|stack-events|ping} <environment> [options]"
+    echo "Usage: $0 {list-builds|list-artifacts|logs|list-deployments|deployment-logs|instance-logs|stack-events|list-stacks|ping} <environment> [options]"
     echo ""
     echo "CodeBuild Commands:"
     echo "  list-builds <env>               - List recent CodeBuild builds"
@@ -31,6 +31,7 @@ usage() {
     echo ""
     echo "CloudFormation Commands:"
     echo "  stack-events <env> [max-items]  - Show CloudFormation stack events (default: 50)"
+    echo "  list-stacks                     - List all CloudFormation stacks"
     echo ""
     echo "Application Commands:"
     echo "  ping <env> [message]            - Test application endpoint via ALB (default: 'ping')"
@@ -44,6 +45,7 @@ usage() {
     echo "  $0 list-deployments dev         # See recent deployments"
     echo "  $0 instance-logs dev            # Check UserData execution"
     echo "  $0 stack-events dev 100         # View stack events"
+    echo "  $0 list-stacks                  # View all CloudFormation stacks"
     echo "  $0 ping dev                     # Test application endpoint"
     exit 1
 }
@@ -390,6 +392,15 @@ cmd_stack_events() {
     echo "To see more events: $0 stack-events $env 100"
 }
 
+cmd_list_stacks() {
+    echo "CloudFormation Stacks:"
+    echo ""
+
+    aws cloudformation list-stacks \
+        --query 'StackSummaries[?StackStatus!=`DELETE_COMPLETE`].[StackName,StackStatus,CreationTime]' \
+        --output table
+}
+
 cmd_ping() {
     local env=$1
     local message="${2:-ping}"
@@ -441,11 +452,23 @@ cmd_ping() {
 }
 
 # Main command router
-if [ -z "$1" ] || [ -z "$2" ]; then
+if [ -z "$1" ]; then
     usage
 fi
 
 COMMAND=$1
+
+# Handle commands that don't require environment
+if [ "$COMMAND" == "list-stacks" ]; then
+    cmd_list_stacks
+    exit 0
+fi
+
+# All other commands require environment
+if [ -z "$2" ]; then
+    usage
+fi
+
 ENV=$2
 shift 2
 

@@ -14,7 +14,7 @@ TEMPLATE_FILE="config/aws/stack.yaml"
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {deploy|delete|update|status|outputs|resources|list} <environment> [options]"
+    echo "Usage: $0 {deploy|delete|update|status|outputs|resources} <environment> [options]"
     echo ""
     echo "Commands:"
     echo "  deploy <env>              - Deploy/create a new stack"
@@ -23,7 +23,6 @@ usage() {
     echo "  status <env>              - Show stack status"
     echo "  outputs <env>             - Show stack outputs"
     echo "  resources <env>           - Show stack resources"
-    echo "  list                      - List all hello-erlang stacks"
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
@@ -294,15 +293,6 @@ show_resources() {
         --output table
 }
 
-list_stacks() {
-    echo "CloudFormation Stacks:"
-    echo ""
-
-    aws cloudformation list-stacks \
-        --query 'StackSummaries[?StackStatus!=`DELETE_COMPLETE`].[StackName,StackStatus,CreationTime]' \
-        --output table
-}
-
 # Main command router
 case "$1" in
     deploy)
@@ -346,9 +336,6 @@ case "$1" in
             usage
         fi
         show_resources "$2"
-        ;;
-    list)
-        list_stacks
         ;;
     *)
         usage
