@@ -507,160 +507,6 @@ Resources:
         - Key: Application
           Value: hello-erlang
 
-  # Lambda Execution Role (for CodeDeploy trigger)
-  LambdaExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub '${Environment}-hello-erlang-lambda-role'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: 'sts:AssumeRole'
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: CodeDeployTrigger
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - codedeploy:CreateDeployment
-                  - codedeploy:GetDeploymentConfig
-                  - codedeploy:GetApplicationRevision
-                  - codedeploy:RegisterApplicationRevision
-                Resource: '*'
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:GetObjectVersion
-                Resource: !Sub '${ArtifactBucket.Arn}/*'
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Application
-          Value: hello-erlang
-
-  # Lambda Function (CodeDeploy trigger)
-  CodeDeployTriggerLambda:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${Environment}-hello-erlang-deploy-trigger'
-      Runtime: python3.11
-      Handler: index.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Timeout: 60
-      Environment:
-        Variables:
-          CODEDEPLOY_APP: !Ref CodeDeployApplication
-          DEPLOYMENT_GROUP: !Ref CodeDeployDeploymentGroup
-          S3_BUCKET: !Ref ArtifactBucket
-      Code:
-        ZipFile: |
-          import boto3
-          import os
-          import json
-
-          codedeploy = boto3.client('codedeploy')
-
-          def handler(event, context):
-              print(f"Received event: {json.dumps(event)}")
-
-              # Parse EventBridge event (from S3 via EventBridge)
-              # EventBridge event format: detail.bucket.name and detail.object.key
-              bucket = event['detail']['bucket']['name']
-              key = event['detail']['object']['key']
-
-              print(f"S3 object: s3://{bucket}/{key}")
-
-              # Only process .tar.gz files in releases/ (EventBridge rule should filter, but double-check)
-              if not key.startswith('releases/') or not key.endswith('.tar.gz'):
-                  print(f"Ignoring non-release artifact: {key}")
-                  return {'statusCode': 200, 'body': 'Ignored non-release artifact'}
-
-              # Extract build-id from key: releases/<build-id>/file.tar.gz
-              parts = key.split('/')
-              if len(parts) < 2:
-                  print(f"Invalid key format: {key}")
-                  return {'statusCode': 400, 'body': 'Invalid key format'}
-
-              build_id = parts[1]
-              print(f"Build ID: {build_id}")
-
-              # Create deployment
-              try:
-                  response = codedeploy.create_deployment(
-                      applicationName=os.environ['CODEDEPLOY_APP'],
-                      deploymentGroupName=os.environ['DEPLOYMENT_GROUP'],
-                      revision={
-                          'revisionType': 'S3',
-                          's3Location': {
-                              'bucket': bucket,
-                              'key': key,
-                              'bundleType': 'tgz'
-                          }
-                      },
-                      deploymentConfigName='CodeDeployDefault.AllAtOnce',
-                      description=f'Automated deployment from CodeBuild: {build_id}'
-                  )
-
-                  deployment_id = response['deploymentId']
-                  print(f"Deployment created: {deployment_id}")
-
-                  return {
-                      'statusCode': 200,
-                      'body': json.dumps({
-                          'deploymentId': deployment_id,
-                          'buildId': build_id
-                      })
-                  }
-              except Exception as e:
-                  print(f"Error creating deployment: {str(e)}")
-                  raise
-      Tags:
-        - Key: Name
-          Value: !Sub '${Environment}-hello-erlang-deploy-trigger'
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Application
-          Value: hello-erlang
-
-  # EventBridge Rule to trigger Lambda on S3 events
-  S3EventRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub '${Environment}-hello-erlang-s3-release-trigger'
-      Description: Trigger CodeDeploy when new release artifact is uploaded to S3
-      State: ENABLED
-      EventPattern:
-        source:
-          - aws.s3
-        detail-type:
-          - Object Created
-        detail:
-          bucket:
-            name:
-              - !Ref ArtifactBucket
-          object:
-            key:
-              - prefix: releases/
-              - suffix: .tar.gz
-      Targets:
-        - Arn: !GetAtt CodeDeployTriggerLambda.Arn
-          Id: CodeDeployTriggerTarget
-
-  # Lambda Permission for EventBridge to invoke
-  EventBridgeLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref CodeDeployTriggerLambda
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt S3EventRule.Arn
-
   # ===================================
   # CodePipeline Resources
   # ===================================
@@ -778,6 +624,21 @@ Resources:
                 - Name: SourceOutput
               OutputArtifacts:
                 - Name: BuildOutput
+
+        # Deploy Stage - Use existing CodeDeploy application
+        - Name: Deploy
+          Actions:
+            - Name: DeployAction
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeploy
+                Version: 1
+              Configuration:
+                ApplicationName: !Ref CodeDeployApplication
+                DeploymentGroupName: !Ref CodeDeployDeploymentGroup
+              InputArtifacts:
+                - Name: BuildOutput
       Tags:
         - Key: Name
           Value: !Sub '${Environment}-hello-erlang-pipeline'
@@ -894,12 +755,6 @@ Outputs:
     Value: !Ref CodeDeployDeploymentGroup
     Export:
       Name: !Sub '${Environment}-hello-erlang-deployment-group'
-
-  LambdaFunctionName:
-    Description: Lambda function name for CodeDeploy trigger
-    Value: !Ref CodeDeployTriggerLambda
-    Export:
-      Name: !Sub '${Environment}-hello-erlang-lambda-trigger'
 
   GitHubConnectionArn:
     Description: CodeStar Connection ARN for GitHub (complete OAuth in console if PENDING)
