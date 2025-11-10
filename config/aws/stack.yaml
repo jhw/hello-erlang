@@ -732,20 +732,21 @@ Resources:
                   pipeline = detail.get('pipeline', 'unknown-pipeline')
                   execution_id = detail.get('execution-id', 'unknown')
 
-                  # Log the full event for debugging
-                  print(f"Full event detail: {json.dumps(detail)}")
-
-                  # Calculate duration if this is a completion event
+                  # Calculate duration for completion events
                   duration_ms = None
                   if state in ['SUCCEEDED', 'FAILED', 'STOPPED']:
-                      # Try to get duration from execution-result
-                      exec_result = detail.get('execution-result')
-                      if exec_result:
-                          print(f"Execution result found: {json.dumps(exec_result)}")
-                          # Check for external-execution-id with timing info
-                          ext_exec_id = exec_result.get('external-execution-id')
-                          if ext_exec_id:
-                              print(f"External execution id: {ext_exec_id}")
+                      # Get start time from detail and end time from event
+                      start_time = detail.get('start-time')
+                      end_time = event.get('time')
+
+                      if start_time and end_time:
+                          try:
+                              from datetime import datetime
+                              start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                              end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                              duration_ms = int((end_dt - start_dt).total_seconds() * 1000)
+                          except Exception as e:
+                              print(f"Error calculating duration: {e}")
 
                   # Determine the event scope and build context
                   if 'Pipeline Execution' in detail_type:
