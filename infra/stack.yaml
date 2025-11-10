@@ -113,11 +113,11 @@ Resources:
         - Key: Application
           Value: hello-erlang
 
-  # S3 Bucket for build artifacts
-  ArtifactBucket:
+  # S3 Bucket for pipeline/build artifacts (CodeBuild, CodePipeline)
+  PipelineArtifactsBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub '${Environment}-hello-erlang-artifacts-${AWS::AccountId}'
+      BucketName: !Sub '${Environment}-hello-erlang-pipeline-artifacts-${AWS::AccountId}'
       VersioningConfiguration:
         Status: Enabled
       LifecycleConfiguration:
@@ -135,11 +135,38 @@ Resources:
           EventBridgeEnabled: true
       Tags:
         - Key: Name
-          Value: !Sub '${Environment}-hello-erlang-artifacts'
+          Value: !Sub '${Environment}-hello-erlang-pipeline-artifacts'
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
           Value: hello-erlang
+
+  # S3 Bucket for stack artifacts (Lambda deployment packages)
+  StackArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Environment}-hello-erlang-stack-artifacts-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 90
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-hello-erlang-stack-artifacts'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+        - Key: Purpose
+          Value: stack-artifacts
 
   # IAM Role for CodeBuild
   CodeBuildRole:
@@ -174,8 +201,8 @@ Resources:
                   - s3:PutObject
                   - s3:ListBucket
                 Resource:
-                  - !GetAtt ArtifactBucket.Arn
-                  - !Sub '${ArtifactBucket.Arn}/*'
+                  - !GetAtt PipelineArtifactsBucket.Arn
+                  - !Sub '${PipelineArtifactsBucket.Arn}/*'
               # ECR access for custom build images
               - Effect: Allow
                 Action:
@@ -207,12 +234,12 @@ Resources:
           - Name: ENVIRONMENT
             Value: !Ref Environment
           - Name: ARTIFACT_BUCKET
-            Value: !Ref ArtifactBucket
+            Value: !Ref PipelineArtifactsBucket
           - Name: ERLANG_VERSION
             Value: !Ref ErlangVersion
       Source:
         Type: CODEPIPELINE
-        BuildSpec: config/aws/buildspec.yml
+        BuildSpec: infra/buildspec.yml
       TimeoutInMinutes: 30
       Tags:
         - Key: Name
@@ -250,8 +277,8 @@ Resources:
                   - s3:GetObjectVersion
                   - s3:ListBucket
                 Resource:
-                  - !GetAtt ArtifactBucket.Arn
-                  - !Sub '${ArtifactBucket.Arn}/*'
+                  - !GetAtt PipelineArtifactsBucket.Arn
+                  - !Sub '${PipelineArtifactsBucket.Arn}/*'
         - PolicyName: CodeDeployAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -577,7 +604,7 @@ Resources:
     Properties:
       FunctionName: !Sub '${Environment}-hello-erlang-app-error-notifier'
       Runtime: python3.11
-      Handler: index.handler
+      Handler: app_error_notifier.handler
       Role: !GetAtt AppErrorNotifierRole.Arn
       Timeout: 30
       Environment:
@@ -588,140 +615,8 @@ Resources:
         LogFormat: Text
         LogGroup: !Ref AppErrorNotifierLogGroup
       Code:
-        ZipFile: |
-          import json
-          import os
-          import urllib.request
-          import urllib.error
-          import base64
-          import gzip
-          from datetime import datetime
-
-          SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL', '')
-          ENVIRONMENT = os.environ.get('ENVIRONMENT', 'unknown')
-
-          def handler(event, context):
-              """
-              Handle Erlang application errors from CloudWatch Logs.
-
-              CloudWatch Logs delivers events in compressed, base64-encoded format.
-              """
-              print(f"Received event: {json.dumps(event)}")
-
-              if not SLACK_WEBHOOK_URL:
-                  print("SLACK_WEBHOOK_URL not configured, skipping notification")
-                  return {'statusCode': 200, 'body': 'Webhook URL not configured'}
-
-              try:
-                  # Decode compressed CloudWatch Logs data
-                  compressed_data = base64.b64decode(event['awslogs']['data'])
-                  log_data = json.loads(gzip.decompress(compressed_data))
-
-                  log_group = log_data['logGroup']
-                  log_stream = log_data['logStream']
-
-                  # Send each log event to Slack
-                  for log_event in log_data['logEvents']:
-                      message = log_event['message']
-                      timestamp_ms = log_event['timestamp']
-
-                      slack_message = format_slack_message(
-                          message,
-                          log_group,
-                          log_stream,
-                          timestamp_ms
-                      )
-                      send_to_slack(slack_message)
-
-                  return {'statusCode': 200, 'body': 'Notifications sent'}
-
-              except Exception as e:
-                  print(f"Error processing event: {str(e)}")
-                  raise
-
-          def format_slack_message(message, log_group, log_stream, timestamp_ms):
-              """Format error as Slack Block Kit message."""
-
-              # Parse timestamp
-              try:
-                  dt = datetime.fromtimestamp(timestamp_ms / 1000)
-                  time_str = dt.strftime('%Y-%m-%d %H:%M:%S UTC')
-              except:
-                  time_str = str(timestamp_ms)
-
-              # Truncate long messages
-              if len(message) > 2000:
-                  message = message[:2000] + "... (truncated)"
-
-              # Build Slack message using Block Kit
-              blocks = [
-                  {
-                      "type": "header",
-                      "text": {
-                          "type": "plain_text",
-                          "text": f"🚨 Erlang Application Error"
-                      }
-                  },
-                  {
-                      "type": "section",
-                      "fields": [
-                          {
-                              "type": "mrkdwn",
-                              "text": f"*Environment:*\n{ENVIRONMENT}"
-                          },
-                          {
-                              "type": "mrkdwn",
-                              "text": f"*Time:*\n{time_str}"
-                          }
-                      ]
-                  },
-                  {
-                      "type": "section",
-                      "text": {
-                          "type": "mrkdwn",
-                          "text": f"*Error Message:*\n```{message}```"
-                      }
-                  },
-                  {
-                      "type": "context",
-                      "elements": [
-                          {
-                              "type": "mrkdwn",
-                              "text": f"Log Stream: `{log_stream}`"
-                          }
-                      ]
-                  }
-              ]
-
-              return {
-                  "attachments": [
-                      {
-                          "color": "#d9534f",  # Red/danger
-                          "blocks": blocks
-                      }
-                  ]
-              }
-
-          def send_to_slack(message):
-              """Send formatted message to Slack webhook."""
-              try:
-                  data = json.dumps(message).encode('utf-8')
-                  req = urllib.request.Request(
-                      SLACK_WEBHOOK_URL,
-                      data=data,
-                      headers={'Content-Type': 'application/json'}
-                  )
-
-                  with urllib.request.urlopen(req, timeout=10) as response:
-                      print(f"Slack response: {response.status}")
-
-              except urllib.error.HTTPError as e:
-                  print(f"HTTP Error sending to Slack: {e.code} - {e.reason}")
-                  print(f"Response: {e.read().decode('utf-8')}")
-                  raise
-              except Exception as e:
-                  print(f"Error sending to Slack: {str(e)}")
-                  raise
+        S3Bucket: !Ref StackArtifactsBucket
+        S3Key: app_error_notifier.zip
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -791,8 +686,8 @@ Resources:
                   - s3:GetBucketLocation
                   - s3:ListBucket
                 Resource:
-                  - !GetAtt ArtifactBucket.Arn
-                  - !Sub '${ArtifactBucket.Arn}/*'
+                  - !GetAtt PipelineArtifactsBucket.Arn
+                  - !Sub '${PipelineArtifactsBucket.Arn}/*'
               # CodeBuild
               - Effect: Allow
                 Action:
@@ -828,7 +723,7 @@ Resources:
       RoleArn: !GetAtt CodePipelineServiceRole.Arn
       ArtifactStore:
         Type: S3
-        Location: !Ref ArtifactBucket
+        Location: !Ref PipelineArtifactsBucket
       Stages:
         # Source Stage - Pull from GitHub
         - Name: Source
@@ -929,7 +824,7 @@ Resources:
     Properties:
       FunctionName: !Sub '${Environment}-hello-erlang-pipeline-notifier'
       Runtime: python3.11
-      Handler: index.handler
+      Handler: pipeline_notifier.handler
       Role: !GetAtt PipelineNotifierRole.Arn
       Timeout: 30
       Environment:
@@ -939,204 +834,8 @@ Resources:
         LogFormat: Text
         LogGroup: !Ref PipelineNotifierLogGroup
       Code:
-        ZipFile: |
-          import json
-          import os
-          import urllib.request
-          import urllib.error
-          from datetime import datetime
-
-          SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL', '')
-
-          def handler(event, context):
-              """
-              Handle CodePipeline EventBridge events and send notifications to Slack.
-
-              Event structure from EventBridge:
-              - detail-type: Pipeline/Stage/Action Execution State Change
-              - detail.state: STARTED, SUCCEEDED, FAILED, etc.
-              - detail.pipeline: pipeline name
-              - detail.stage: stage name (if applicable)
-              - detail.action: action name (if applicable)
-              """
-              print(f"Received event: {json.dumps(event)}")
-
-              if not SLACK_WEBHOOK_URL:
-                  print("SLACK_WEBHOOK_URL not configured, skipping notification")
-                  return {'statusCode': 200, 'body': 'Webhook URL not configured'}
-
-              try:
-                  detail_type = event.get('detail-type', '')
-                  detail = event.get('detail', {})
-                  state = detail.get('state', 'UNKNOWN')
-                  pipeline = detail.get('pipeline', 'unknown-pipeline')
-                  execution_id = detail.get('execution-id', 'unknown')
-
-                  # Calculate duration for completion events
-                  duration_ms = None
-                  if state in ['SUCCEEDED', 'FAILED', 'STOPPED']:
-                      # Get start time from detail and end time from event
-                      start_time = detail.get('start-time')
-                      end_time = event.get('time')
-
-                      if start_time and end_time:
-                          try:
-                              from datetime import datetime
-                              start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                              end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
-                              duration_ms = int((end_dt - start_dt).total_seconds() * 1000)
-                          except Exception as e:
-                              print(f"Error calculating duration: {e}")
-
-                  # Determine the event scope and build context
-                  if 'Pipeline Execution' in detail_type:
-                      scope = 'Pipeline'
-                      scope_name = pipeline.split('-')[-1]  # Just the environment-specific part
-                      context = pipeline
-                  elif 'Stage Execution' in detail_type:
-                      scope = 'Stage'
-                      stage = detail.get('stage', 'unknown-stage')
-                      scope_name = stage
-                      context = f"{pipeline} → {stage}"
-                  elif 'Action Execution' in detail_type:
-                      scope = 'Action'
-                      stage = detail.get('stage', 'unknown-stage')
-                      action = detail.get('action', 'unknown-action')
-                      scope_name = action
-                      context = f"{pipeline} → {stage} → {action}"
-                  else:
-                      scope = 'Unknown'
-                      scope_name = 'Unknown'
-                      context = pipeline
-
-                  # Format and send Slack message
-                  slack_message = format_slack_message(scope, scope_name, context, state, detail_type, event.get('time', ''), duration_ms)
-                  send_to_slack(slack_message)
-
-                  return {'statusCode': 200, 'body': 'Notification sent'}
-
-              except Exception as e:
-                  print(f"Error processing event: {str(e)}")
-                  raise
-
-          def format_slack_message(scope, scope_name, context, state, detail_type, event_time, duration_ms=None):
-              """Format EventBridge event as Slack Block Kit message."""
-
-              # Determine message style based on state
-              if state in ['FAILED', 'STOPPED', 'SUPERSEDED']:
-                  emoji = '🚨'
-                  color = '#d9534f'  # Red for errors
-                  state_text = f"*{state}*"
-              elif state == 'STARTED':
-                  emoji = '🔄'
-                  color = '#5bc0de'  # Blue for info
-                  state_text = state
-              elif state == 'SUCCEEDED':
-                  emoji = '✅'
-                  color = '#5cb85c'  # Green for success
-                  state_text = state
-              else:
-                  emoji = 'ℹ️'
-                  color = '#f0ad4e'  # Orange for other states
-                  state_text = state
-
-              # Parse timestamp
-              try:
-                  dt = datetime.fromisoformat(event_time.replace('Z', '+00:00'))
-                  time_str = dt.strftime('%Y-%m-%d %H:%M:%S UTC')
-              except:
-                  time_str = event_time
-
-              # Format context with backticks for better visibility
-              context_formatted = context.replace(' → ', ' → `').replace('dev-hello-erlang-pipeline', '`dev-hello-erlang-pipeline`')
-              if '`' in context_formatted and not context_formatted.endswith('`'):
-                  context_formatted = context_formatted + '`'
-
-              # Build title with scope name for better visibility
-              if scope == 'Pipeline':
-                  title = f"{emoji} {scope}: {state_text}"
-              else:
-                  title = f"{emoji} {scope}: {scope_name} → {state_text}"
-
-              # Build fields
-              fields = [
-                  {
-                      "type": "mrkdwn",
-                      "text": f"*Context:*\n{context_formatted}"
-                  },
-                  {
-                      "type": "mrkdwn",
-                      "text": f"*Time:*\n{time_str}"
-                  }
-              ]
-
-              # Add duration if available (will add once we extract it from events)
-              if duration_ms:
-                  duration_sec = duration_ms / 1000
-                  if duration_sec < 60:
-                      duration_str = f"{duration_sec:.0f}s"
-                  else:
-                      minutes = int(duration_sec // 60)
-                      seconds = int(duration_sec % 60)
-                      duration_str = f"{minutes}m {seconds}s"
-                  fields.append({
-                      "type": "mrkdwn",
-                      "text": f"*Duration:*\n{duration_str}"
-                  })
-
-              # Build Slack message using Block Kit
-              blocks = [
-                  {
-                      "type": "header",
-                      "text": {
-                          "type": "plain_text",
-                          "text": title
-                      }
-                  },
-                  {
-                      "type": "section",
-                      "fields": fields
-                  },
-                  {
-                      "type": "context",
-                      "elements": [
-                          {
-                              "type": "mrkdwn",
-                              "text": f"_{detail_type}_"
-                          }
-                      ]
-                  }
-              ]
-
-              return {
-                  "attachments": [
-                      {
-                          "color": color,
-                          "blocks": blocks
-                      }
-                  ]
-              }
-
-          def send_to_slack(message):
-              """Send formatted message to Slack webhook."""
-              try:
-                  data = json.dumps(message).encode('utf-8')
-                  req = urllib.request.Request(
-                      SLACK_WEBHOOK_URL,
-                      data=data,
-                      headers={'Content-Type': 'application/json'}
-                  )
-
-                  with urllib.request.urlopen(req, timeout=10) as response:
-                      print(f"Slack response: {response.status}")
-
-              except urllib.error.HTTPError as e:
-                  print(f"HTTP Error sending to Slack: {e.code} - {e.reason}")
-                  print(f"Response: {e.read().decode('utf-8')}")
-                  raise
-              except Exception as e:
-                  print(f"Error sending to Slack: {str(e)}")
-                  raise
+        S3Bucket: !Ref StackArtifactsBucket
+        S3Key: pipeline_notifier.zip
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -1213,9 +912,9 @@ Outputs:
     Description: Connect to EC2 via SSM Session Manager (no SSH key required)
     Value: !Sub 'aws ssm start-session --target ${EC2Instance}'
 
-  ArtifactBucketName:
+  PipelineArtifactsBucketName:
     Description: S3 bucket for build artifacts
-    Value: !Ref ArtifactBucket
+    Value: !Ref PipelineArtifactsBucket
     Export:
       Name: !Sub '${Environment}-hello-erlang-artifact-bucket'
 

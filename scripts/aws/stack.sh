@@ -10,7 +10,7 @@ if [ -f "config/env.sh" ]; then
     source "config/env.sh"
 fi
 
-TEMPLATE_FILE="config/aws/stack.yaml"
+TEMPLATE_FILE="infra/stack.yaml"
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {

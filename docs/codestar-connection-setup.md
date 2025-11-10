@@ -19,7 +19,7 @@ This guide walks you through activating the connection so CodePipeline can pull 
 Check your stack outputs to find the connection ARN:
 
 ```bash
-./scripts/aws-stack.sh outputs dev
+./scripts/aws/stack.sh outputs dev
 ```
 
 Look for the `GitHubConnectionArn` output. You can also use the command shown in `GitHubConnectionStatus` output.

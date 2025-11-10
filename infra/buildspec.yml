@@ -42,9 +42,9 @@ phases:
       - echo "Extracting Erlang release..."
       - tar -xzf "$TARBALL" -C bundle/
       - echo "Adding CodeDeploy files..."
-      - cp config/aws/appspec.yml bundle/
+      - cp infra/appspec.yml bundle/
       - mkdir -p bundle/scripts
-      - cp config/aws/codedeploy/*.sh bundle/scripts/
+      - cp infra/codedeploy/*.sh bundle/scripts/
       - echo "Deployment bundle structure:"
       - ls -la bundle/
       - echo "Scripts:"

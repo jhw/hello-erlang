@@ -2,8 +2,8 @@
 # Test deployed hello-erlang application endpoints
 #
 # Usage:
-#   ./scripts/aws-test.sh echo <env> [message]
-#   ./scripts/aws-test.sh add <env> <x> <y>
+#   ./scripts/aws/test.sh echo <env> [message]
+#   ./scripts/aws/test.sh add <env> <x> <y>
 
 set -e
 
@@ -30,7 +30,7 @@ get_alb_dns() {
 
     if [ -z "$alb_dns" ]; then
         echo "Error: Could not get Load Balancer DNS for environment '$env'" >&2
-        echo "Make sure the stack is deployed: ./scripts/aws-stack.sh deploy $env" >&2
+        echo "Make sure the stack is deployed: ./scripts/aws/stack.sh deploy $env" >&2
         exit 1
     fi
 
