@@ -158,8 +158,8 @@ auto_discover_vpc_and_subnets() {
 
     echo "  Found subnets: $subnet_list" >&2
 
-    # Output format: vpc_id,subnet_list
-    echo "${vpc_id},${subnet_list}"
+    # Output format: vpc_id|subnet_list
+    echo "${vpc_id}|${subnet_list}"
 }
 
 create_stack() {
@@ -242,8 +242,8 @@ create_stack() {
     # Auto-discover VPC and subnets if not provided
     if [ -z "$subnets" ] || [ -z "$vpc_id" ]; then
         local discovery_result=$(auto_discover_vpc_and_subnets)
-        vpc_id=$(echo "$discovery_result" | cut -d',' -f1)
-        subnets=$(echo "$discovery_result" | cut -d',' -f2)
+        vpc_id=$(echo "$discovery_result" | cut -d'|' -f1)
+        subnets=$(echo "$discovery_result" | cut -d'|' -f2)
     else
         # If subnets provided but no VPC, discover VPC from first subnet
         if [ -z "$vpc_id" ]; then

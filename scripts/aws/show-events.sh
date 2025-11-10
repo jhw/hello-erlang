@@ -51,6 +51,13 @@ echo "CloudFormation events for: $STACK_NAME"
 echo "Showing last $MAX_ITEMS events"
 echo ""
 
+# ANSI color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
 # Get events with full details including ResourceStatusReason
 aws cloudformation describe-stack-events \
     --stack-name "$STACK_NAME" \
@@ -64,4 +71,23 @@ aws cloudformation describe-stack-events \
         .LogicalResourceId,
         (.ResourceStatusReason // "")
     ] | @tsv' | \
-    column -t -s $'\t'
+    while IFS=$'\t' read -r timestamp status type logical reason; do
+        # Color code based on status
+        case "$status" in
+            *COMPLETE)
+                color="$GREEN"
+                ;;
+            *FAILED|*ROLLBACK*)
+                color="$RED"
+                ;;
+            *IN_PROGRESS)
+                color="$BLUE"
+                ;;
+            *)
+                color="$YELLOW"
+                ;;
+        esac
+
+        printf "${color}%-28s  %-21s  %-45s  %-30s  %s${NC}\n" \
+            "$timestamp" "$status" "$type" "$logical" "$reason"
+    done
