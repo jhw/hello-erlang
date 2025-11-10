@@ -12,7 +12,8 @@
 start(_StartType, _StartArgs) ->
     Dispatch = cowboy_router:compile([
         {'_', [
-            {"/echo", echo_handler, []}
+            {"/echo", echo_handler, []},
+            {"/add", add_handler, []}
         ]}
     ]),
     {ok, _} = cowboy:start_clear(http_listener,
