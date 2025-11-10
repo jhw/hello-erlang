@@ -74,6 +74,7 @@ check_bucket_exists() {
 package_and_upload_handlers() {
     local env=$1
     local bucket_name=$(get_bucket_name "$env")
+    local zip_file="handlers.zip"
 
     echo ""
     echo "=== Lambda Handlers ==="
@@ -82,36 +83,34 @@ package_and_upload_handlers() {
     rm -rf "$BUILD_DIR"
     mkdir -p "$BUILD_DIR"
 
-    # Package each handler
+    # Check all handlers exist
     for handler_file in app_error_notifier.py pipeline_notifier.py; do
         if [ ! -f "${HANDLERS_DIR}/${handler_file}" ]; then
             echo "Error: Handler not found: ${HANDLERS_DIR}/${handler_file}"
             exit 1
         fi
-
-        local handler_name=$(basename "$handler_file" .py)
-        local zip_file="${handler_name}.zip"
-
-        echo "Packaging: $handler_name"
-
-        # Create zip directly in build directory
-        cd "$HANDLERS_DIR"
-        zip -q "${handler_file}.zip" "${handler_file}"
-        mv "${handler_file}.zip" "../../${BUILD_DIR}/${zip_file}"
-        cd - > /dev/null
-
-        # Upload to S3
-        aws s3 cp "${BUILD_DIR}/${zip_file}" "s3://${bucket_name}/${zip_file}" --only-show-errors
-
-        # Get version ID
-        local version_id=$(aws s3api list-object-versions \
-            --bucket "$bucket_name" \
-            --prefix "$zip_file" \
-            --query 'Versions[?IsLatest==`true`].VersionId' \
-            --output text)
-
-        echo "  ✓ Uploaded: s3://${bucket_name}/${zip_file} (v${version_id})"
     done
+
+    echo "Packaging all handlers into single zip..."
+
+    # Create single zip with all handlers
+    cd "$HANDLERS_DIR"
+    zip -q "$zip_file" *.py
+    mv "$zip_file" "../../${BUILD_DIR}/"
+    cd - > /dev/null
+
+    # Upload to S3
+    aws s3 cp "${BUILD_DIR}/${zip_file}" "s3://${bucket_name}/${zip_file}" --only-show-errors
+
+    # Get version ID
+    local version_id=$(aws s3api list-object-versions \
+        --bucket "$bucket_name" \
+        --prefix "$zip_file" \
+        --query 'Versions[?IsLatest==`true`].VersionId' \
+        --output text)
+
+    echo "  ✓ Uploaded: s3://${bucket_name}/${zip_file} (v${version_id})"
+    echo "  Contains: app_error_notifier.py, pipeline_notifier.py"
 }
 
 upload_template() {

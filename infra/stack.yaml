@@ -593,7 +593,7 @@ Resources:
         LogGroup: !Ref AppErrorNotifierLogGroup
       Code:
         S3Bucket: !Sub '${Environment}-hello-erlang-stack-artifacts-${AWS::AccountId}'
-        S3Key: app_error_notifier.zip
+        S3Key: handlers.zip
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -812,7 +812,7 @@ Resources:
         LogGroup: !Ref PipelineNotifierLogGroup
       Code:
         S3Bucket: !Sub '${Environment}-hello-erlang-stack-artifacts-${AWS::AccountId}'
-        S3Key: pipeline_notifier.zip
+        S3Key: handlers.zip
       Tags:
         - Key: Environment
           Value: !Ref Environment
