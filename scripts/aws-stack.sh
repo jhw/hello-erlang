@@ -395,6 +395,10 @@ update_stack() {
         esac
     done
 
+    # Slack webhooks for notifications
+    local slack_pipeline_webhook="${SLACK_PIPELINE_WEBHOOK_URL:-}"
+    local slack_app_webhook="${SLACK_APP_WEBHOOK_URL:-}"
+
     # Build parameters list (use previous values by default, override if specified)
     local params=(
         "ParameterKey=Environment,UsePreviousValue=true"
@@ -405,8 +409,8 @@ update_stack() {
         "ParameterKey=GitHubOwner,UsePreviousValue=true"
         "ParameterKey=GitHubRepo,UsePreviousValue=true"
         "ParameterKey=GitHubBranch,UsePreviousValue=true"
-        "ParameterKey=SlackPipelineWebhookUrl,UsePreviousValue=true"
-        "ParameterKey=SlackAppWebhookUrl,UsePreviousValue=true"
+        "ParameterKey=SlackPipelineWebhookUrl,ParameterValue=$slack_pipeline_webhook"
+        "ParameterKey=SlackAppWebhookUrl,ParameterValue=$slack_app_webhook"
     )
 
     # Replace with overrides if provided
