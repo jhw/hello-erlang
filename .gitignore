@@ -25,3 +25,4 @@ rebar3.crashdump
 
 # Local environment configuration
 config/env.sh
+.build/

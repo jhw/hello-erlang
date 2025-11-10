@@ -91,19 +91,26 @@ aws s3api put-public-access-block \
 
 # Add lifecycle policy
 echo "Configuring lifecycle policy..."
+cat > /tmp/lifecycle.json <<'EOF'
+{
+  "Rules": [
+    {
+      "ID": "DeleteOldVersions",
+      "Filter": {},
+      "Status": "Enabled",
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 90
+      }
+    }
+  ]
+}
+EOF
+
 aws s3api put-bucket-lifecycle-configuration \
     --bucket "$BUCKET_NAME" \
-    --lifecycle-configuration '{
-      "Rules": [
-        {
-          "Id": "DeleteOldVersions",
-          "Status": "Enabled",
-          "NoncurrentVersionExpiration": {
-            "NoncurrentDays": 90
-          }
-        }
-      ]
-    }'
+    --lifecycle-configuration file:///tmp/lifecycle.json
+
+rm /tmp/lifecycle.json
 
 # Add tags
 aws s3api put-bucket-tagging \
