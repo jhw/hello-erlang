@@ -581,7 +581,7 @@ Resources:
     Properties:
       FunctionName: !Sub '${Environment}-hello-erlang-app-error-notifier'
       Runtime: python3.11
-      Handler: app_error_notifier.handler
+      Handler: app_error_notifier.index.handler
       Role: !GetAtt AppErrorNotifierRole.Arn
       Timeout: 30
       Environment:
@@ -801,7 +801,7 @@ Resources:
     Properties:
       FunctionName: !Sub '${Environment}-hello-erlang-pipeline-notifier'
       Runtime: python3.11
-      Handler: pipeline_notifier.handler
+      Handler: pipeline_notifier.index.handler
       Role: !GetAtt PipelineNotifierRole.Arn
       Timeout: 30
       Environment:

@@ -22,9 +22,8 @@ usage() {
     echo "Complete stack deployment workflow:"
     echo "  1. Verify stack-artifacts bucket exists"
     echo "  2. Package and upload Lambda handlers"
-    echo "  3. Upload CloudFormation template"
-    echo "  4. Create CloudFormation stack"
-    echo "  5. Wait for completion and show outputs"
+    echo "  3. Create CloudFormation stack"
+    echo "  4. Wait for completion and show outputs"
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
@@ -83,19 +82,23 @@ package_and_upload_handlers() {
     rm -rf "$BUILD_DIR"
     mkdir -p "$BUILD_DIR"
 
-    # Check all handlers exist
-    for handler_file in app_error_notifier.py pipeline_notifier.py; do
-        if [ ! -f "${HANDLERS_DIR}/${handler_file}" ]; then
-            echo "Error: Handler not found: ${HANDLERS_DIR}/${handler_file}"
+    # Check all handler directories exist
+    for handler_dir in app_error_notifier pipeline_notifier; do
+        if [ ! -d "${HANDLERS_DIR}/${handler_dir}" ]; then
+            echo "Error: Handler directory not found: ${HANDLERS_DIR}/${handler_dir}"
+            exit 1
+        fi
+        if [ ! -f "${HANDLERS_DIR}/${handler_dir}/index.py" ]; then
+            echo "Error: Handler file not found: ${HANDLERS_DIR}/${handler_dir}/index.py"
             exit 1
         fi
     done
 
-    echo "Packaging all handlers into single zip..."
+    echo "Packaging all handlers into single zip (recursive)..."
 
-    # Create single zip with all handlers
+    # Create single zip with all handlers recursively
     cd "$HANDLERS_DIR"
-    zip -q "$zip_file" *.py
+    zip -qr "$zip_file" .
     mv "$zip_file" "../../${BUILD_DIR}/"
     cd - > /dev/null
 
@@ -110,42 +113,7 @@ package_and_upload_handlers() {
         --output text)
 
     echo "  ✓ Uploaded: s3://${bucket_name}/${zip_file} (v${version_id})"
-    echo "  Contains: app_error_notifier.py, pipeline_notifier.py"
-}
-
-upload_template() {
-    local env=$1
-    local bucket_name=$(get_bucket_name "$env")
-    local template_key="stack.yaml"
-
-    echo "" >&2
-    echo "=== CloudFormation Template ===" >&2
-    echo "Uploading template to S3..." >&2
-
-    # Upload template
-    aws s3 cp "$TEMPLATE_FILE" "s3://${bucket_name}/${template_key}" --only-show-errors
-
-    # Get version ID
-    local version_id=$(aws s3api list-object-versions \
-        --bucket "$bucket_name" \
-        --prefix "$template_key" \
-        --query 'Versions[?IsLatest==`true`].VersionId' \
-        --output text)
-
-    # Get bucket region
-    local region=$(aws s3api get-bucket-location --bucket "$bucket_name" --query 'LocationConstraint' --output text)
-    if [ "$region" == "None" ] || [ -z "$region" ]; then
-        region="us-east-1"
-    fi
-
-    # Construct S3 URL (CloudFormation requires s3.region.amazonaws.com format)
-    local template_url="https://s3.${region}.amazonaws.com/${bucket_name}/${template_key}"
-
-    echo "  ✓ Template uploaded (v${version_id})" >&2
-    echo "  URL: $template_url" >&2
-
-    # Return the template URL (stdout only)
-    echo "$template_url"
+    echo "  Contains: app_error_notifier/, pipeline_notifier/"
 }
 
 auto_discover_vpc_and_subnets() {
@@ -196,8 +164,7 @@ auto_discover_vpc_and_subnets() {
 
 create_stack() {
     local env=$1
-    local template_url=$2
-    shift 2
+    shift
     local stack_name=$(get_stack_name $env)
 
     echo ""
@@ -331,7 +298,7 @@ create_stack() {
 
     aws cloudformation create-stack \
         --stack-name "$stack_name" \
-        --template-url "$template_url" \
+        --template-body "file://$TEMPLATE_FILE" \
         --parameters "${params[@]}" \
         --capabilities CAPABILITY_NAMED_IAM \
         --tags \
@@ -391,12 +358,8 @@ echo "Step 2: Packaging and uploading Lambda handlers..."
 package_and_upload_handlers "$ENV"
 
 echo ""
-echo "Step 3: Uploading CloudFormation template..."
-TEMPLATE_URL=$(upload_template "$ENV")
-
-echo ""
-echo "Step 4: Creating CloudFormation stack..."
-create_stack "$ENV" "$TEMPLATE_URL" "$@"
+echo "Step 3: Creating CloudFormation stack..."
+create_stack "$ENV" "$@"
 
 echo ""
 echo "========================================"
