@@ -14,7 +14,7 @@ TEMPLATE_FILE="config/aws/stack.yaml"
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {deploy|delete|update|status|outputs|resources|events|ping} <environment> [options]"
+    echo "Usage: $0 {deploy|delete|update|status|outputs|resources|events} <environment> [options]"
     echo ""
     echo "Commands:"
     echo "  deploy <env>              - Deploy/create a new stack"
@@ -24,7 +24,6 @@ usage() {
     echo "  outputs <env>             - Show stack outputs"
     echo "  resources <env>           - Show stack resources"
     echo "  events <env> [max-items]  - Show stack events (default: 50, useful for debugging)"
-    echo "  ping <env> [message]      - Test application endpoint via ALB (default: 'ping')"
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
@@ -534,60 +533,6 @@ show_events() {
     echo "To see more events: $0 events $env 100"
 }
 
-ping_app() {
-    local env=$1
-    local message="${2:-ping}"
-    local stack_name=$(get_stack_name $env)
-
-    # Get ALB DNS name from stack outputs
-    local alb_dns=$(aws cloudformation describe-stacks \
-        --stack-name "$stack_name" \
-        --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
-        --output text 2>/dev/null)
-
-    if [ -z "$alb_dns" ]; then
-        echo "Error: Could not get Load Balancer DNS for environment '$env'" >&2
-        exit 1
-    fi
-
-    # URL encode the message
-    local encoded_message=$(printf %s "$message" | jq -sRr @uri)
-    local url="http://${alb_dns}/echo?message=${encoded_message}"
-
-    echo "Testing application endpoint..."
-    echo "  Environment: $env"
-    echo "  URL: $url"
-    echo ""
-
-    if ! command -v curl &> /dev/null; then
-        echo "Error: curl not found. Please install curl."
-        exit 1
-    fi
-
-    local response=$(curl -s -w "\n%{http_code}" --connect-timeout 5 --max-time 10 "$url" 2>/dev/null)
-    local http_code=$(echo "$response" | tail -n 1)
-    local body=$(echo "$response" | sed '$d')
-
-    if [ "$http_code" == "200" ] && [ "$body" == "$message" ]; then
-        echo "✓ Application is responding"
-        echo "  Status: 200 OK"
-        echo "  Response: $body"
-    elif [ "$http_code" == "200" ]; then
-        echo "⚠ Application responded but with unexpected content"
-        echo "  Status: 200 OK"
-        echo "  Response: $body"
-        echo "  Expected: $message"
-    elif [ -n "$http_code" ]; then
-        echo "✗ Application returned error"
-        echo "  Status: $http_code"
-        echo "  Response: $body"
-        exit 1
-    else
-        echo "✗ Application not responding"
-        echo "  Could not connect to $url"
-        exit 1
-    fi
-}
 
 # Main command router
 case "$1" in
@@ -639,13 +584,6 @@ case "$1" in
             usage
         fi
         show_events "$2" "$3"
-        ;;
-    ping)
-        if [ -z "$2" ]; then
-            echo "Error: Environment required"
-            usage
-        fi
-        ping_app "$2" "$3"
         ;;
     *)
         usage
