@@ -732,25 +732,44 @@ Resources:
                   pipeline = detail.get('pipeline', 'unknown-pipeline')
                   execution_id = detail.get('execution-id', 'unknown')
 
+                  # Log the full event for debugging
+                  print(f"Full event detail: {json.dumps(detail)}")
+
+                  # Calculate duration if this is a completion event
+                  duration_ms = None
+                  if state in ['SUCCEEDED', 'FAILED', 'STOPPED']:
+                      # Try to get duration from execution-result
+                      exec_result = detail.get('execution-result')
+                      if exec_result:
+                          print(f"Execution result found: {json.dumps(exec_result)}")
+                          # Check for external-execution-id with timing info
+                          ext_exec_id = exec_result.get('external-execution-id')
+                          if ext_exec_id:
+                              print(f"External execution id: {ext_exec_id}")
+
                   # Determine the event scope and build context
                   if 'Pipeline Execution' in detail_type:
                       scope = 'Pipeline'
+                      scope_name = pipeline.split('-')[-1]  # Just the environment-specific part
                       context = pipeline
                   elif 'Stage Execution' in detail_type:
                       scope = 'Stage'
                       stage = detail.get('stage', 'unknown-stage')
+                      scope_name = stage
                       context = f"{pipeline} → {stage}"
                   elif 'Action Execution' in detail_type:
                       scope = 'Action'
                       stage = detail.get('stage', 'unknown-stage')
                       action = detail.get('action', 'unknown-action')
+                      scope_name = action
                       context = f"{pipeline} → {stage} → {action}"
                   else:
                       scope = 'Unknown'
+                      scope_name = 'Unknown'
                       context = pipeline
 
                   # Format and send Slack message
-                  slack_message = format_slack_message(scope, context, state, detail_type, event.get('time', ''))
+                  slack_message = format_slack_message(scope, scope_name, context, state, detail_type, event.get('time', ''), duration_ms)
                   send_to_slack(slack_message)
 
                   return {'statusCode': 200, 'body': 'Notification sent'}
@@ -759,7 +778,7 @@ Resources:
                   print(f"Error processing event: {str(e)}")
                   raise
 
-          def format_slack_message(scope, context, state, detail_type, event_time):
+          def format_slack_message(scope, scope_name, context, state, detail_type, event_time, duration_ms=None):
               """Format EventBridge event as Slack Block Kit message."""
 
               # Determine message style based on state
@@ -792,27 +811,50 @@ Resources:
               if '`' in context_formatted and not context_formatted.endswith('`'):
                   context_formatted = context_formatted + '`'
 
+              # Build title with scope name for better visibility
+              if scope == 'Pipeline':
+                  title = f"{emoji} {scope}: {state_text}"
+              else:
+                  title = f"{emoji} {scope}: {scope_name} → {state_text}"
+
+              # Build fields
+              fields = [
+                  {
+                      "type": "mrkdwn",
+                      "text": f"*Context:*\n{context_formatted}"
+                  },
+                  {
+                      "type": "mrkdwn",
+                      "text": f"*Time:*\n{time_str}"
+                  }
+              ]
+
+              # Add duration if available (will add once we extract it from events)
+              if duration_ms:
+                  duration_sec = duration_ms / 1000
+                  if duration_sec < 60:
+                      duration_str = f"{duration_sec:.0f}s"
+                  else:
+                      minutes = int(duration_sec // 60)
+                      seconds = int(duration_sec % 60)
+                      duration_str = f"{minutes}m {seconds}s"
+                  fields.append({
+                      "type": "mrkdwn",
+                      "text": f"*Duration:*\n{duration_str}"
+                  })
+
               # Build Slack message using Block Kit
               blocks = [
                   {
                       "type": "header",
                       "text": {
                           "type": "plain_text",
-                          "text": f"{emoji} {scope}: {state_text}"
+                          "text": title
                       }
                   },
                   {
                       "type": "section",
-                      "fields": [
-                          {
-                              "type": "mrkdwn",
-                              "text": f"*Context:*\n{context_formatted}"
-                          },
-                          {
-                              "type": "mrkdwn",
-                              "text": f"*Time:*\n{time_str}"
-                          }
-                      ]
+                      "fields": fields
                   },
                   {
                       "type": "context",
