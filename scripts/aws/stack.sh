@@ -27,6 +27,10 @@ usage() {
     echo ""
     echo "Environments: dev, staging, prod"
     echo ""
+    echo "Prerequisites:"
+    echo "  - Stack-artifacts bucket must exist: ./scripts/aws/artifacts.sh create <env>"
+    echo "  - Lambda handlers must be deployed: ./scripts/aws/deploy-handlers.sh <env>"
+    echo ""
     echo "Options for deploy:"
     echo "  --instance-type <type>    - EC2 instance type (default: t3.micro)"
     echo "  --erlang-version <ver>    - Erlang/OTP version (default: 27.1)"
@@ -57,6 +61,50 @@ usage() {
 get_stack_name() {
     local env=$1
     echo "${STACK_PREFIX}-${env}"
+}
+
+get_bucket_name() {
+    local env=$1
+    local account_id=$(aws sts get-caller-identity --query Account --output text)
+    echo "${env}-${STACK_PREFIX}-stack-artifacts-${account_id}"
+}
+
+upload_template_to_s3() {
+    local env=$1
+    local bucket_name=$(get_bucket_name "$env")
+    local template_key="stack.yaml"
+
+    echo "Uploading CloudFormation template to S3..."
+    echo "  Bucket: $bucket_name"
+    echo "  Key: $template_key"
+
+    # Check if bucket exists
+    if ! aws s3api head-bucket --bucket "$bucket_name" 2>/dev/null; then
+        echo ""
+        echo "Error: Stack artifacts bucket does not exist: $bucket_name"
+        echo "Create it first: ./scripts/aws/artifacts.sh create $env"
+        exit 1
+    fi
+
+    # Upload template
+    aws s3 cp "$TEMPLATE_FILE" "s3://${bucket_name}/${template_key}" --only-show-errors
+
+    # Get version ID
+    local version_id=$(aws s3api list-object-versions \
+        --bucket "$bucket_name" \
+        --prefix "$template_key" \
+        --query 'Versions[?IsLatest==`true`].VersionId' \
+        --output text)
+
+    # Construct S3 URL
+    local template_url="https://${bucket_name}.s3.amazonaws.com/${template_key}"
+
+    echo "  ✓ Template uploaded"
+    echo "  Version ID: $version_id"
+    echo ""
+
+    # Return the template URL
+    echo "$template_url"
 }
 
 auto_discover_vpc_and_subnets() {
@@ -241,9 +289,12 @@ create_stack() {
         "ParameterKey=SlackAppWebhookUrl,ParameterValue=$slack_app_webhook"
     )
 
+    # Upload template to S3 and get URL
+    local template_url=$(upload_template_to_s3 "$env")
+
     aws cloudformation create-stack \
         --stack-name "$stack_name" \
-        --template-body "file://$TEMPLATE_FILE" \
+        --template-url "$template_url" \
         --parameters "${params[@]}" \
         --capabilities CAPABILITY_NAMED_IAM \
         --tags \
@@ -424,9 +475,12 @@ update_stack() {
         done
     fi
 
+    # Upload template to S3 and get URL
+    local template_url=$(upload_template_to_s3 "$env")
+
     aws cloudformation update-stack \
         --stack-name "$stack_name" \
-        --template-body "file://$TEMPLATE_FILE" \
+        --template-url "$template_url" \
         --parameters "${params[@]}" \
         --capabilities CAPABILITY_NAMED_IAM
 

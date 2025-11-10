@@ -24,9 +24,12 @@ infra/
 ## CloudFormation Template
 
 **File:** `stack.yaml`
-**Size:** ~957 lines, ~31KB (62% of 50KB limit)
+**Size:** ~957 lines, ~31KB
+**Deployment:** Uploaded to S3 (no size limit)
 
-The main CloudFormation template defines the complete deployment infrastructure:
+The main CloudFormation template defines the complete deployment infrastructure.
+
+**Note:** The template is automatically uploaded to the stack-artifacts S3 bucket during deployment, removing the 51KB CloudFormation size limit and enabling template versioning.
 
 ### Resources Created
 
@@ -39,13 +42,22 @@ The main CloudFormation template defines the complete deployment infrastructure:
 
 ### Deployment
 
+The CloudFormation template is automatically uploaded to S3 during deployment. This provides:
+- **No size limit** (not constrained by CloudFormation's 51KB limit)
+- **Automatic versioning** via S3
+- **Template history** for rollback and auditing
+
 Deploy the stack using the management script:
 
 ```bash
-# Deploy new stack
+# Prerequisites (first time only)
+./scripts/aws/artifacts.sh create dev
+./scripts/aws/deploy-handlers.sh dev
+
+# Deploy new stack (template automatically uploaded to S3)
 ./scripts/aws/stack.sh deploy dev
 
-# Update existing stack
+# Update existing stack (new template version uploaded to S3)
 ./scripts/aws/stack.sh update dev
 ```
 
@@ -105,7 +117,11 @@ The infrastructure uses two separate S3 buckets:
 ### Stack Artifacts Bucket
 
 - **Name Pattern**: `{env}-hello-erlang-stack-artifacts-{AccountId}`
-- **Purpose**: Stores Lambda deployment packages
+- **Purpose**: Stores Lambda deployment packages and CloudFormation templates
+- **Contents**:
+  - `stack.yaml` - CloudFormation template (versioned)
+  - `app_error_notifier.zip` - Lambda handler (versioned)
+  - `pipeline_notifier.zip` - Lambda handler (versioned)
 - **Versioning**: Enabled
 - **Lifecycle**: 90-day retention for old versions
 - **Managed by**: `scripts/aws/artifacts.sh` script
