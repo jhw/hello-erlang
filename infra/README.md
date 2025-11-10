@@ -2,6 +2,46 @@
 
 This directory contains all AWS infrastructure configuration and Lambda function code for the hello-erlang deployment.
 
+## AWS Management Scripts
+
+All AWS operations are performed through single-purpose scripts in `scripts/aws/`:
+
+### Stack Operations
+```bash
+./scripts/aws/deploy-stack.sh <env>     # Complete deployment
+./scripts/aws/update-stack.sh <env>     # Update existing stack
+./scripts/aws/delete-stack.sh <env>     # Delete stack
+./scripts/aws/show-stack.sh <env>       # Show stack status
+./scripts/aws/show-outputs.sh <env>     # Show stack outputs
+./scripts/aws/show-resources.sh <env>   # Show stack resources
+./scripts/aws/show-events.sh <env>      # Show stack events
+./scripts/aws/restart-agents.sh <env>   # Restart EC2 agents
+```
+
+### Bucket Operations
+```bash
+./scripts/aws/create-bucket.sh <env>    # Create stack-artifacts bucket
+./scripts/aws/delete-bucket.sh <env>    # Delete bucket
+./scripts/aws/empty-bucket.sh <env>     # Empty bucket contents
+./scripts/aws/list-bucket.sh <env>      # List bucket contents
+```
+
+### Testing
+```bash
+./scripts/aws/test-echo.sh <env> [msg]  # Test echo endpoint
+./scripts/aws/test-add.sh <env> <x> <y> # Test add endpoint
+```
+
+### Debugging
+```bash
+./scripts/aws/list-builds.sh <env>          # List CodeBuild builds
+./scripts/aws/show-build-logs.sh <env> <id> # Show build logs
+./scripts/aws/list-deployments.sh <env>     # List deployments
+./scripts/aws/show-deployment-logs.sh ...   # Show deployment details
+./scripts/aws/show-instance-logs.sh <env>   # Show EC2 logs
+./scripts/aws/list-stacks.sh                # List all stacks
+```
+
 ## Directory Structure
 
 ```
