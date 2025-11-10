@@ -787,13 +787,18 @@ Resources:
               except:
                   time_str = event_time
 
+              # Format context with backticks for better visibility
+              context_formatted = context.replace(' → ', ' → `').replace('dev-hello-erlang-pipeline', '`dev-hello-erlang-pipeline`')
+              if '`' in context_formatted and not context_formatted.endswith('`'):
+                  context_formatted = context_formatted + '`'
+
               # Build Slack message using Block Kit
               blocks = [
                   {
                       "type": "header",
                       "text": {
                           "type": "plain_text",
-                          "text": f"{emoji} Pipeline {scope}: {state_text}"
+                          "text": f"{emoji} {scope}: {state_text}"
                       }
                   },
                   {
@@ -801,7 +806,7 @@ Resources:
                       "fields": [
                           {
                               "type": "mrkdwn",
-                              "text": f"*Context:*\n{context}"
+                              "text": f"*Context:*\n{context_formatted}"
                           },
                           {
                               "type": "mrkdwn",
