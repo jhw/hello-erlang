@@ -1,8 +1,10 @@
-# Metrics Viewer Implementation Plan
+# Metrics Viewer Implementation Plan - EC2 Metrics
 
 ## Overview
 
-Add a `/metrics` endpoint to the ALB that displays EC2 system metrics (CPU, memory, disk) in a web dashboard. Uses CloudWatch Agent for collection, Lambda for serving, and Bootstrap + Chart.js for visualization.
+Add a `/metrics` endpoint to the ALB that displays **EC2 system metrics** (CPU, memory, disk, TCP connections) in a web dashboard. Uses CloudWatch Agent for collection, Lambda for serving, and Bootstrap + Chart.js for visualization.
+
+**Note:** This plan covers EC2 infrastructure metrics only. See `metrics-viewer-erlang-implementation-plan.md` for adding Erlang application metrics.
 
 ## Architecture
 
