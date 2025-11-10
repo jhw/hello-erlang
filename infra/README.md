@@ -47,19 +47,28 @@ The CloudFormation template is automatically uploaded to S3 during deployment. T
 - **Automatic versioning** via S3
 - **Template history** for rollback and auditing
 
-Deploy the stack using the management script:
+Deploy the stack using the deployment scripts:
 
 ```bash
-# Prerequisites (first time only)
-./scripts/aws/artifacts.sh create dev
-./scripts/aws/deploy-handlers.sh dev
+# First time: Create stack-artifacts bucket
+./scripts/aws/create-bucket.sh dev
 
-# Deploy new stack (template automatically uploaded to S3)
-./scripts/aws/stack.sh deploy dev
+# Deploy new stack (complete workflow: handlers + template + stack)
+./scripts/aws/deploy-stack.sh dev
 
-# Update existing stack (new template version uploaded to S3)
-./scripts/aws/stack.sh update dev
+# Update existing stack (complete workflow: handlers + template + update)
+./scripts/aws/update-stack.sh dev
+
+# Delete stack (optionally with buckets)
+./scripts/aws/delete-stack.sh dev
+./scripts/aws/delete-stack.sh dev --delete-buckets
 ```
+
+The deploy and update scripts automatically:
+1. Check prerequisites (bucket exists)
+2. Package and upload Lambda handlers
+3. Upload CloudFormation template
+4. Create or update the stack
 
 ## Lambda Handlers
 
@@ -74,33 +83,27 @@ Lambda functions are now stored as **external Python files** and deployed to S3,
 
 ### Deploying Lambda Handlers
 
-Before deploying or updating the CloudFormation stack, you must upload the Lambda handlers to S3:
+Lambda handlers are automatically packaged and uploaded as part of the deployment workflow:
 
 ```bash
-# 1. Create the stack-artifacts bucket (first time only)
-./scripts/aws/artifacts.sh create dev
-
-# 2. Package and upload Lambda handlers
-./scripts/aws/deploy-handlers.sh dev
-
-# 3. Deploy or update the stack
-./scripts/aws/stack.sh deploy dev
+# Deploy or update - handlers are automatically included
+./scripts/aws/deploy-stack.sh dev
+./scripts/aws/update-stack.sh dev
 ```
 
-The deployment script:
-1. Packages each Python handler into a ZIP file
-2. Uploads to the stack-artifacts S3 bucket
-3. Bucket versioning automatically tracks deployments
+The deploy/update scripts automatically:
+1. Package each Python handler into a ZIP file
+2. Upload to the stack-artifacts S3 bucket with versioning
+3. Update Lambda functions to use the new versions
 
 ### Handler Development
 
 To modify a Lambda function:
 
 1. Edit the Python file in `infra/handlers/`
-2. Deploy handlers: `./scripts/aws/deploy-handlers.sh <env>`
-3. Update the CloudFormation stack: `./scripts/aws/stack.sh update <env>`
+2. Run update: `./scripts/aws/update-stack.sh <env>`
 
-Lambda functions will automatically use the latest uploaded code.
+The update script will package, upload, and deploy the changes automatically.
 
 ## S3 Buckets
 
