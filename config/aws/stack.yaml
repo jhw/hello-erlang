@@ -50,6 +50,12 @@ Parameters:
     Type: String
     Description: Branch to monitor (e.g., deploy/dev, deploy/staging, deploy/prod)
 
+  SlackWebhookUrl:
+    Type: String
+    NoEcho: true
+    Description: Slack webhook URL for pipeline notifications
+    Default: ""
+
 Resources:
   # ALB Security Group
   ALBSecurityGroup:
@@ -574,20 +580,6 @@ Resources:
         - Key: Application
           Value: hello-erlang
 
-  # CloudWatch Log Group for Pipeline events
-  PipelineLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/codepipeline/${Environment}-hello-erlang-pipeline'
-      RetentionInDays: 14
-
-  # CloudWatch Log Group for Pipeline EventBridge events
-  PipelineEventsLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/events/codepipeline/${Environment}-hello-erlang'
-      RetentionInDays: 7
-
   # CodePipeline
   CodePipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -653,12 +645,231 @@ Resources:
         - Key: Application
           Value: hello-erlang
 
+  # Lambda Log Group for Pipeline Notifier (pre-created to avoid auto-creation issues)
+  PipelineNotifierLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${Environment}-hello-erlang-pipeline-notifier'
+      RetentionInDays: 7
+
+  # IAM Role for Pipeline Notifier Lambda
+  PipelineNotifierRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-hello-erlang-pipeline-notifier-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: LambdaLogging
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt PipelineNotifierLogGroup.Arn
+                  - !Sub '${PipelineNotifierLogGroup.Arn}:*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # Lambda Function for Pipeline Notifications
+  PipelineNotifierFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: PipelineNotifierLogGroup
+    Properties:
+      FunctionName: !Sub '${Environment}-hello-erlang-pipeline-notifier'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt PipelineNotifierRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
+      LoggingConfig:
+        LogFormat: Text
+        LogGroup: !Ref PipelineNotifierLogGroup
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import urllib.request
+          import urllib.error
+          from datetime import datetime
+
+          SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL', '')
+
+          def handler(event, context):
+              """
+              Handle CodePipeline EventBridge events and send notifications to Slack.
+
+              Event structure from EventBridge:
+              - detail-type: Pipeline/Stage/Action Execution State Change
+              - detail.state: STARTED, SUCCEEDED, FAILED, etc.
+              - detail.pipeline: pipeline name
+              - detail.stage: stage name (if applicable)
+              - detail.action: action name (if applicable)
+              """
+              print(f"Received event: {json.dumps(event)}")
+
+              if not SLACK_WEBHOOK_URL:
+                  print("SLACK_WEBHOOK_URL not configured, skipping notification")
+                  return {'statusCode': 200, 'body': 'Webhook URL not configured'}
+
+              try:
+                  detail_type = event.get('detail-type', '')
+                  detail = event.get('detail', {})
+                  state = detail.get('state', 'UNKNOWN')
+                  pipeline = detail.get('pipeline', 'unknown-pipeline')
+                  execution_id = detail.get('execution-id', 'unknown')
+
+                  # Determine the event scope and build context
+                  if 'Pipeline Execution' in detail_type:
+                      scope = 'Pipeline'
+                      context = pipeline
+                  elif 'Stage Execution' in detail_type:
+                      scope = 'Stage'
+                      stage = detail.get('stage', 'unknown-stage')
+                      context = f"{pipeline} → {stage}"
+                  elif 'Action Execution' in detail_type:
+                      scope = 'Action'
+                      stage = detail.get('stage', 'unknown-stage')
+                      action = detail.get('action', 'unknown-action')
+                      context = f"{pipeline} → {stage} → {action}"
+                  else:
+                      scope = 'Unknown'
+                      context = pipeline
+
+                  # Format and send Slack message
+                  slack_message = format_slack_message(scope, context, state, detail_type, event.get('time', ''))
+                  send_to_slack(slack_message)
+
+                  return {'statusCode': 200, 'body': 'Notification sent'}
+
+              except Exception as e:
+                  print(f"Error processing event: {str(e)}")
+                  raise
+
+          def format_slack_message(scope, context, state, detail_type, event_time):
+              """Format EventBridge event as Slack Block Kit message."""
+
+              # Determine message style based on state
+              if state in ['FAILED', 'STOPPED', 'SUPERSEDED']:
+                  emoji = '🚨'
+                  color = '#d9534f'  # Red for errors
+                  state_text = f"*{state}*"
+              elif state == 'STARTED':
+                  emoji = '🔄'
+                  color = '#5bc0de'  # Blue for info
+                  state_text = state
+              elif state == 'SUCCEEDED':
+                  emoji = '✅'
+                  color = '#5cb85c'  # Green for success
+                  state_text = state
+              else:
+                  emoji = 'ℹ️'
+                  color = '#f0ad4e'  # Orange for other states
+                  state_text = state
+
+              # Parse timestamp
+              try:
+                  dt = datetime.fromisoformat(event_time.replace('Z', '+00:00'))
+                  time_str = dt.strftime('%Y-%m-%d %H:%M:%S UTC')
+              except:
+                  time_str = event_time
+
+              # Build Slack message using Block Kit
+              blocks = [
+                  {
+                      "type": "header",
+                      "text": {
+                          "type": "plain_text",
+                          "text": f"{emoji} Pipeline {scope}: {state_text}"
+                      }
+                  },
+                  {
+                      "type": "section",
+                      "fields": [
+                          {
+                              "type": "mrkdwn",
+                              "text": f"*Context:*\n{context}"
+                          },
+                          {
+                              "type": "mrkdwn",
+                              "text": f"*Time:*\n{time_str}"
+                          }
+                      ]
+                  },
+                  {
+                      "type": "context",
+                      "elements": [
+                          {
+                              "type": "mrkdwn",
+                              "text": f"_{detail_type}_"
+                          }
+                      ]
+                  }
+              ]
+
+              return {
+                  "attachments": [
+                      {
+                          "color": color,
+                          "blocks": blocks
+                      }
+                  ]
+              }
+
+          def send_to_slack(message):
+              """Send formatted message to Slack webhook."""
+              try:
+                  data = json.dumps(message).encode('utf-8')
+                  req = urllib.request.Request(
+                      SLACK_WEBHOOK_URL,
+                      data=data,
+                      headers={'Content-Type': 'application/json'}
+                  )
+
+                  with urllib.request.urlopen(req, timeout=10) as response:
+                      print(f"Slack response: {response.status}")
+
+              except urllib.error.HTTPError as e:
+                  print(f"HTTP Error sending to Slack: {e.code} - {e.reason}")
+                  print(f"Response: {e.read().decode('utf-8')}")
+                  raise
+              except Exception as e:
+                  print(f"Error sending to Slack: {str(e)}")
+                  raise
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: hello-erlang
+
+  # Lambda Permission for EventBridge to invoke the function
+  PipelineNotifierInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PipelineNotifierFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt PipelineEventRule.Arn
+
   # EventBridge Rule to capture pipeline events
   PipelineEventRule:
     Type: AWS::Events::Rule
     Properties:
       Name: !Sub '${Environment}-hello-erlang-pipeline-events'
-      Description: Capture CodePipeline execution events for logging
+      Description: Capture CodePipeline execution events and send to Slack
       State: ENABLED
       EventPattern:
         source:
@@ -671,31 +882,8 @@ Resources:
           pipeline:
             - !Ref CodePipeline
       Targets:
-        - Arn: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${PipelineEventsLogGroup}'
-          Id: CloudWatchLogTarget
-
-  # IAM Policy for EventBridge to write to CloudWatch Logs
-  PipelineEventLogPolicy:
-    Type: AWS::Logs::ResourcePolicy
-    Properties:
-      PolicyName: !Sub '${Environment}-hello-erlang-pipeline-log-policy'
-      PolicyDocument: !Sub |
-        {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Effect": "Allow",
-              "Principal": {
-                "Service": ["events.amazonaws.com", "delivery.logs.amazonaws.com"]
-              },
-              "Action": [
-                "logs:CreateLogStream",
-                "logs:PutLogEvents"
-              ],
-              "Resource": "${PipelineEventsLogGroup.Arn}"
-            }
-          ]
-        }
+        - Arn: !GetAtt PipelineNotifierFunction.Arn
+          Id: PipelineNotifierTarget
 
 Outputs:
   InstanceId:

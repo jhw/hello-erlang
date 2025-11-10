@@ -121,6 +121,9 @@ create_stack() {
     local github_repo="${GITHUB_REPO:-hello-erlang}"
     local github_branch=""
 
+    # Slack webhook for pipeline notifications
+    local slack_webhook="${SLACK_WEBHOOK_URL:-}"
+
     # Select branch based on environment
     case "$env" in
         dev)
@@ -211,6 +214,11 @@ create_stack() {
     echo "  GitHub Owner: $github_owner"
     echo "  GitHub Repo: $github_repo"
     echo "  GitHub Branch: $github_branch"
+    if [ -n "$slack_webhook" ]; then
+        echo "  Slack Notifications: Enabled"
+    else
+        echo "  Slack Notifications: Disabled (set SLACK_WEBHOOK_URL in config/env.sh to enable)"
+    fi
     echo "  SSH Access: Disabled (use SSM Session Manager for emergency access)"
     echo ""
 
@@ -224,6 +232,7 @@ create_stack() {
         "ParameterKey=GitHubOwner,ParameterValue=$github_owner"
         "ParameterKey=GitHubRepo,ParameterValue=$github_repo"
         "ParameterKey=GitHubBranch,ParameterValue=$github_branch"
+        "ParameterKey=SlackWebhookUrl,ParameterValue=$slack_webhook"
     )
 
     aws cloudformation create-stack \
@@ -390,6 +399,7 @@ update_stack() {
         "ParameterKey=GitHubOwner,UsePreviousValue=true"
         "ParameterKey=GitHubRepo,UsePreviousValue=true"
         "ParameterKey=GitHubBranch,UsePreviousValue=true"
+        "ParameterKey=SlackWebhookUrl,UsePreviousValue=true"
     )
 
     # Replace with overrides if provided
