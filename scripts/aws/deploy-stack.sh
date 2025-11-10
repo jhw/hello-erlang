@@ -91,22 +91,14 @@ package_and_upload_handlers() {
 
         local handler_name=$(basename "$handler_file" .py)
         local zip_file="${handler_name}.zip"
-        local build_handler_dir="${BUILD_DIR}/${handler_name}"
 
         echo "Packaging: $handler_name"
 
-        # Create clean build directory for this handler
-        rm -rf "$build_handler_dir"
-        mkdir -p "$build_handler_dir"
-
-        # Copy handler file and create zip
-        cp "${HANDLERS_DIR}/${handler_file}" "${build_handler_dir}/"
-        cd "$build_handler_dir"
-        zip -q "$zip_file" "${handler_file}"
+        # Create zip directly in build directory
+        cd "$HANDLERS_DIR"
+        zip -q "${handler_file}.zip" "${handler_file}"
+        mv "${handler_file}.zip" "../../${BUILD_DIR}/${zip_file}"
         cd - > /dev/null
-
-        # Move zip to build root
-        mv "${build_handler_dir}/${zip_file}" "${BUILD_DIR}/"
 
         # Upload to S3
         aws s3 cp "${BUILD_DIR}/${zip_file}" "s3://${bucket_name}/${zip_file}" --only-show-errors
@@ -127,9 +119,9 @@ upload_template() {
     local bucket_name=$(get_bucket_name "$env")
     local template_key="stack.yaml"
 
-    echo ""
-    echo "=== CloudFormation Template ==="
-    echo "Uploading template to S3..."
+    echo "" >&2
+    echo "=== CloudFormation Template ===" >&2
+    echo "Uploading template to S3..." >&2
 
     # Upload template
     aws s3 cp "$TEMPLATE_FILE" "s3://${bucket_name}/${template_key}" --only-show-errors
@@ -141,12 +133,19 @@ upload_template() {
         --query 'Versions[?IsLatest==`true`].VersionId' \
         --output text)
 
-    # Construct S3 URL
-    local template_url="https://${bucket_name}.s3.amazonaws.com/${template_key}"
+    # Get bucket region
+    local region=$(aws s3api get-bucket-location --bucket "$bucket_name" --query 'LocationConstraint' --output text)
+    if [ "$region" == "None" ] || [ -z "$region" ]; then
+        region="us-east-1"
+    fi
 
-    echo "  ✓ Template uploaded (v${version_id})"
+    # Construct S3 URL (CloudFormation requires s3.region.amazonaws.com format)
+    local template_url="https://s3.${region}.amazonaws.com/${bucket_name}/${template_key}"
 
-    # Return the template URL
+    echo "  ✓ Template uploaded (v${version_id})" >&2
+    echo "  URL: $template_url" >&2
+
+    # Return the template URL (stdout only)
     echo "$template_url"
 }
 

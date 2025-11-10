@@ -141,32 +141,9 @@ Resources:
         - Key: Application
           Value: hello-erlang
 
-  # S3 Bucket for stack artifacts (Lambda deployment packages)
-  StackArtifactsBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${Environment}-hello-erlang-stack-artifacts-${AWS::AccountId}'
-      VersioningConfiguration:
-        Status: Enabled
-      LifecycleConfiguration:
-        Rules:
-          - Id: DeleteOldVersions
-            Status: Enabled
-            NoncurrentVersionExpirationInDays: 90
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      Tags:
-        - Key: Name
-          Value: !Sub '${Environment}-hello-erlang-stack-artifacts'
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Application
-          Value: hello-erlang
-        - Key: Purpose
-          Value: stack-artifacts
+  # Note: Stack artifacts bucket (for Lambda deployment packages and CloudFormation template)
+  # is NOT managed by this stack. It must be created before deployment using:
+  # ./scripts/aws/create-bucket.sh <environment>
 
   # IAM Role for CodeBuild
   CodeBuildRole:
@@ -615,7 +592,7 @@ Resources:
         LogFormat: Text
         LogGroup: !Ref AppErrorNotifierLogGroup
       Code:
-        S3Bucket: !Ref StackArtifactsBucket
+        S3Bucket: !Sub '${Environment}-hello-erlang-stack-artifacts-${AWS::AccountId}'
         S3Key: app_error_notifier.zip
       Tags:
         - Key: Environment
@@ -834,7 +811,7 @@ Resources:
         LogFormat: Text
         LogGroup: !Ref PipelineNotifierLogGroup
       Code:
-        S3Bucket: !Ref StackArtifactsBucket
+        S3Bucket: !Sub '${Environment}-hello-erlang-stack-artifacts-${AWS::AccountId}'
         S3Key: pipeline_notifier.zip
       Tags:
         - Key: Environment
