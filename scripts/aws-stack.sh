@@ -121,8 +121,9 @@ create_stack() {
     local github_repo="${GITHUB_REPO:-hello-erlang}"
     local github_branch=""
 
-    # Slack webhook for pipeline notifications
-    local slack_webhook="${SLACK_WEBHOOK_URL:-}"
+    # Slack webhooks for notifications
+    local slack_pipeline_webhook="${SLACK_PIPELINE_WEBHOOK_URL:-}"
+    local slack_app_webhook="${SLACK_APP_WEBHOOK_URL:-}"
 
     # Select branch based on environment
     case "$env" in
@@ -214,10 +215,15 @@ create_stack() {
     echo "  GitHub Owner: $github_owner"
     echo "  GitHub Repo: $github_repo"
     echo "  GitHub Branch: $github_branch"
-    if [ -n "$slack_webhook" ]; then
-        echo "  Slack Notifications: Enabled"
+    if [ -n "$slack_pipeline_webhook" ]; then
+        echo "  Slack Pipeline Alerts: Enabled"
     else
-        echo "  Slack Notifications: Disabled (set SLACK_WEBHOOK_URL in config/env.sh to enable)"
+        echo "  Slack Pipeline Alerts: Disabled (set SLACK_PIPELINE_WEBHOOK_URL in config/env.sh)"
+    fi
+    if [ -n "$slack_app_webhook" ]; then
+        echo "  Slack App Error Alerts: Enabled"
+    else
+        echo "  Slack App Error Alerts: Disabled (set SLACK_APP_WEBHOOK_URL in config/env.sh)"
     fi
     echo "  SSH Access: Disabled (use SSM Session Manager for emergency access)"
     echo ""
@@ -232,7 +238,8 @@ create_stack() {
         "ParameterKey=GitHubOwner,ParameterValue=$github_owner"
         "ParameterKey=GitHubRepo,ParameterValue=$github_repo"
         "ParameterKey=GitHubBranch,ParameterValue=$github_branch"
-        "ParameterKey=SlackWebhookUrl,ParameterValue=$slack_webhook"
+        "ParameterKey=SlackPipelineWebhookUrl,ParameterValue=$slack_pipeline_webhook"
+        "ParameterKey=SlackAppWebhookUrl,ParameterValue=$slack_app_webhook"
     )
 
     aws cloudformation create-stack \
@@ -399,7 +406,8 @@ update_stack() {
         "ParameterKey=GitHubOwner,UsePreviousValue=true"
         "ParameterKey=GitHubRepo,UsePreviousValue=true"
         "ParameterKey=GitHubBranch,UsePreviousValue=true"
-        "ParameterKey=SlackWebhookUrl,UsePreviousValue=true"
+        "ParameterKey=SlackPipelineWebhookUrl,UsePreviousValue=true"
+        "ParameterKey=SlackAppWebhookUrl,UsePreviousValue=true"
     )
 
     # Replace with overrides if provided

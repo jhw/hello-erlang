@@ -5,9 +5,21 @@
 set -e
 
 DEPLOY_DIR="/opt/hello_erlang"
+LOG_DIR="/var/log/hello_erlang"
 
 echo "=== BeforeInstall Hook ==="
 echo "Preparing deployment directory: $DEPLOY_DIR"
+
+# Create log directory if it doesn't exist
+if [ ! -d "$LOG_DIR" ]; then
+    echo "Creating log directory: $LOG_DIR"
+    sudo mkdir -p "$LOG_DIR"
+    sudo chown ec2-user:ec2-user "$LOG_DIR"
+    sudo chmod 755 "$LOG_DIR"
+    echo "✓ Log directory created"
+else
+    echo "Log directory already exists: $LOG_DIR"
+fi
 
 cd "$DEPLOY_DIR"
 
