@@ -14,7 +14,7 @@ TEMPLATE_FILE="config/aws/stack.yaml"
 STACK_PREFIX="${STACK_PREFIX:-hello-erlang}"
 
 usage() {
-    echo "Usage: $0 {deploy|delete|update|status|outputs|resources|events} <environment> [options]"
+    echo "Usage: $0 {deploy|delete|update|status|outputs|resources|events|restart-agents} <environment> [options]"
     echo ""
     echo "Commands:"
     echo "  deploy <env>              - Deploy/create a new stack"
@@ -537,6 +537,143 @@ show_events() {
     echo "To see more events: $0 events $env 100"
 }
 
+restart_agents() {
+    local env=$1
+    local stack_name=$(get_stack_name $env)
+
+    echo "Restarting CloudWatch and CodeDeploy agents..."
+    echo "  Environment: $env"
+    echo ""
+
+    # Get EC2 instance ID from stack
+    local instance_id=$(aws cloudformation describe-stack-resources \
+        --stack-name "$stack_name" \
+        --query 'StackResources[?ResourceType==`AWS::EC2::Instance`].PhysicalResourceId' \
+        --output text 2>/dev/null)
+
+    if [ -z "$instance_id" ]; then
+        echo "Error: Could not find EC2 instance for environment '$env'" >&2
+        exit 1
+    fi
+
+    echo "Instance ID: $instance_id"
+    echo ""
+
+    # Create updated CloudWatch Agent config
+    cat > /tmp/cw-agent-config-$$.json <<EOF
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/aws/codedeploy-agent/codedeploy-agent.log",
+            "log_group_name": "/aws/codedeploy/$env/agent",
+            "log_stream_name": "{instance_id}/codedeploy-agent.log",
+            "retention_in_days": 7
+          },
+          {
+            "file_path": "/opt/codedeploy-agent/deployment-root/deployment-logs/codedeploy-agent-deployments.log",
+            "log_group_name": "/aws/codedeploy/$env/deployments",
+            "log_stream_name": "{instance_id}/deployments.log",
+            "retention_in_days": 7
+          },
+          {
+            "file_path": "/tmp/codedeploy-agent.update.log",
+            "log_group_name": "/aws/codedeploy/$env/updates",
+            "log_stream_name": "{instance_id}/updates.log",
+            "retention_in_days": 3
+          },
+          {
+            "file_path": "/var/log/hello_erlang/errors.log",
+            "log_group_name": "/aws/ec2/hello-erlang/$env",
+            "log_stream_name": "{instance_id}/errors",
+            "timezone": "UTC",
+            "retention_in_days": 7
+          }
+        ]
+      }
+    }
+  }
+}
+EOF
+
+    # Prepare the restart commands
+    local config_content=$(cat /tmp/cw-agent-config-$$.json | sed 's/"/\\"/g' | tr '\n' ' ')
+    rm /tmp/cw-agent-config-$$.json
+
+    echo "Sending restart command via SSM..."
+    local command_id=$(aws ssm send-command \
+        --document-name "AWS-RunShellScript" \
+        --targets "Key=instanceids,Values=$instance_id" \
+        --parameters "commands=[
+            \"echo 'Updating CloudWatch Agent config...'\",
+            \"cat > /tmp/cw-agent-config.json <<'EOFCONFIG'\",
+            \"$config_content\",
+            \"EOFCONFIG\",
+            \"sudo cp /tmp/cw-agent-config.json /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json\",
+            \"echo 'Restarting CloudWatch Agent...'\",
+            \"sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json\",
+            \"echo 'Restarting CodeDeploy Agent...'\",
+            \"sudo systemctl restart codedeploy-agent\",
+            \"echo 'Done - agents restarted'\",
+            \"sudo systemctl status codedeploy-agent | head -5\",
+            \"sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -m ec2 -a query | head -10\"
+        ]" \
+        --query 'Command.CommandId' \
+        --output text 2>/dev/null)
+
+    if [ -z "$command_id" ]; then
+        echo "Error: Failed to send restart command" >&2
+        exit 1
+    fi
+
+    echo "Command ID: $command_id"
+    echo "Waiting for command to complete..."
+    echo ""
+
+    # Wait for command to complete
+    sleep 5
+
+    local status=""
+    for i in {1..30}; do
+        status=$(aws ssm get-command-invocation \
+            --command-id "$command_id" \
+            --instance-id "$instance_id" \
+            --query 'Status' \
+            --output text 2>/dev/null)
+
+        if [ "$status" == "Success" ]; then
+            echo "✓ Agents restarted successfully"
+            echo ""
+            echo "Output:"
+            aws ssm get-command-invocation \
+                --command-id "$command_id" \
+                --instance-id "$instance_id" \
+                --query 'StandardOutputContent' \
+                --output text 2>/dev/null
+            return 0
+        elif [ "$status" == "Failed" ]; then
+            echo "✗ Agent restart failed"
+            echo ""
+            echo "Error output:"
+            aws ssm get-command-invocation \
+                --command-id "$command_id" \
+                --instance-id "$instance_id" \
+                --query 'StandardErrorContent' \
+                --output text 2>/dev/null
+            exit 1
+        fi
+
+        echo -n "."
+        sleep 2
+    done
+
+    echo ""
+    echo "⚠ Command timed out (status: $status)"
+    echo "Check SSM console for details: command-id=$command_id"
+}
+
 
 # Main command router
 case "$1" in
@@ -588,6 +725,13 @@ case "$1" in
             usage
         fi
         show_events "$2" "$3"
+        ;;
+    restart-agents)
+        if [ -z "$2" ]; then
+            echo "Error: Environment required"
+            usage
+        fi
+        restart_agents "$2"
         ;;
     *)
         usage
