@@ -732,25 +732,48 @@ Resources:
                   pipeline = detail.get('pipeline', 'unknown-pipeline')
                   execution_id = detail.get('execution-id', 'unknown')
 
+                  # Extract execution times if available (for completed states)
+                  execution_start = None
+                  execution_end = None
+                  duration_seconds = None
+
+                  if state in ['SUCCEEDED', 'FAILED', 'STOPPED']:
+                      execution_result = detail.get('execution-result', {})
+                      if execution_result:
+                          execution_start = execution_result.get('start-time')
+                          execution_end = execution_result.get('end-time')
+                          if execution_start and execution_end:
+                              try:
+                                  from datetime import datetime
+                                  start_dt = datetime.fromisoformat(execution_start.replace('Z', '+00:00'))
+                                  end_dt = datetime.fromisoformat(execution_end.replace('Z', '+00:00'))
+                                  duration_seconds = int((end_dt - start_dt).total_seconds())
+                              except:
+                                  pass
+
                   # Determine the event scope and build context
                   if 'Pipeline Execution' in detail_type:
                       scope = 'Pipeline'
+                      scope_name = pipeline
                       context = pipeline
                   elif 'Stage Execution' in detail_type:
                       scope = 'Stage'
                       stage = detail.get('stage', 'unknown-stage')
+                      scope_name = stage
                       context = f"{pipeline} → {stage}"
                   elif 'Action Execution' in detail_type:
                       scope = 'Action'
                       stage = detail.get('stage', 'unknown-stage')
                       action = detail.get('action', 'unknown-action')
+                      scope_name = action
                       context = f"{pipeline} → {stage} → {action}"
                   else:
                       scope = 'Unknown'
+                      scope_name = 'unknown'
                       context = pipeline
 
                   # Format and send Slack message
-                  slack_message = format_slack_message(scope, context, state, detail_type, event.get('time', ''))
+                  slack_message = format_slack_message(scope, scope_name, context, state, detail_type, event.get('time', ''), duration_seconds)
                   send_to_slack(slack_message)
 
                   return {'statusCode': 200, 'body': 'Notification sent'}
@@ -759,7 +782,7 @@ Resources:
                   print(f"Error processing event: {str(e)}")
                   raise
 
-          def format_slack_message(scope, context, state, detail_type, event_time):
+          def format_slack_message(scope, scope_name, context, state, detail_type, event_time, duration_seconds=None):
               """Format EventBridge event as Slack Block Kit message."""
 
               # Determine message style based on state
@@ -787,10 +810,42 @@ Resources:
               except:
                   time_str = event_time
 
+              # Format duration if available
+              duration_str = None
+              if duration_seconds is not None:
+                  if duration_seconds < 60:
+                      duration_str = f"{duration_seconds}s"
+                  else:
+                      minutes = duration_seconds // 60
+                      seconds = duration_seconds % 60
+                      duration_str = f"{minutes}m {seconds}s"
+
               # Format context with backticks for better visibility
               context_formatted = context.replace(' → ', ' → `').replace('dev-hello-erlang-pipeline', '`dev-hello-erlang-pipeline`')
               if '`' in context_formatted and not context_formatted.endswith('`'):
                   context_formatted = context_formatted + '`'
+
+              # Build title with scope name
+              title = f"{emoji} {scope}: {scope_name} → {state_text}"
+
+              # Build fields for section
+              fields = [
+                  {
+                      "type": "mrkdwn",
+                      "text": f"*Context:*\n{context_formatted}"
+                  },
+                  {
+                      "type": "mrkdwn",
+                      "text": f"*Time:*\n{time_str}"
+                  }
+              ]
+
+              # Add duration field if available
+              if duration_str:
+                  fields.append({
+                      "type": "mrkdwn",
+                      "text": f"*Duration:*\n{duration_str}"
+                  })
 
               # Build Slack message using Block Kit
               blocks = [
@@ -798,21 +853,12 @@ Resources:
                       "type": "header",
                       "text": {
                           "type": "plain_text",
-                          "text": f"{emoji} {scope}: {state_text}"
+                          "text": title
                       }
                   },
                   {
                       "type": "section",
-                      "fields": [
-                          {
-                              "type": "mrkdwn",
-                              "text": f"*Context:*\n{context_formatted}"
-                          },
-                          {
-                              "type": "mrkdwn",
-                              "text": f"*Time:*\n{time_str}"
-                          }
-                      ]
+                      "fields": fields
                   },
                   {
                       "type": "context",
